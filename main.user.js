@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Video Screenshot with Shift + S from h5player
-// @namespace    http://tampermonkey.net/
+// @namespace    https://gitee.com/jason403/Video-Screenshot-with-Shift-S-from-h5player/
 // @version      1.0
 // @description  按下Shift+S键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
