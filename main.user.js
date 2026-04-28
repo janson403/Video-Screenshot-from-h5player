@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
-// @namespace    https://gitee.com/jason403/Video-Screenshot-with-Shift-S-from-h5player/
-// @version      1.3
+// @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
+// @version      202604281355
 // @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -9,8 +9,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @downloadURL  https://raw.giteeusercontent.com/jason403/Video-Screenshot-with-Shift-S-from-h5player/raw/master/main.user.js
-// @updateURL    https://raw.giteeusercontent.com/jason403/Video-Screenshot-with-Shift-S-from-h5player/raw/master/main.user.js
+// @downloadURL  https://raw.giteeusercontent.com/jason403/Video-Screenshot-from-h5player/raw/master/main.user.js
+// @updateURL    https://raw.giteeusercontent.com/jason403/Video-Screenshot-from-h5player/raw/master/main.user.js
 // ==/UserScript==
 
 ;(function () {
