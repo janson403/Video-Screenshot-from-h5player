@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3
+
+- 新增自定义快捷键设置功能，需要从油猴菜单中进行设置。
+
 ## 1.2
 
 - 使用MutationObserver监听shadow dom变化。

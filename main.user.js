@@ -1,12 +1,14 @@
 // ==UserScript==
-// @name         Video Screenshot with Shift + S from h5player
+// @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-with-Shift-S-from-h5player/
-// @version      1.2
-// @description  按下Shift+S键进行视频截图，支持shadow dom和iframe跨域
+// @version      1.3
+// @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
 // @match        *://*/*
 // @run-at       document-start
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
 // @downloadURL  https://raw.giteeusercontent.com/jason403/Video-Screenshot-with-Shift-S-from-h5player/raw/master/main.user.js
 // @updateURL    https://raw.giteeusercontent.com/jason403/Video-Screenshot-with-Shift-S-from-h5player/raw/master/main.user.js
 // ==/UserScript==
@@ -20,6 +22,14 @@
   let shadowDomList = []
   // 当前活跃的视频播放器实例
   let activePlayerInstance = null
+
+  // 快捷键配置
+  let shortcutConfig = {
+    key: GM_getValue('videoCapture_key', 's'),
+    shiftKey: GM_getValue('videoCapture_shiftKey', true),
+    ctrlKey: GM_getValue('videoCapture_ctrlKey', false),
+    altKey: GM_getValue('videoCapture_altKey', false),
+  }
 
   /**
    * 设置视频元素的CORS属性，解决跨域截图问题
@@ -360,23 +370,236 @@
   }
 
   /**
+   * 检查是否匹配自定义快捷键
+   * @param {KeyboardEvent} event - 键盘事件
+   * @returns {boolean}
+   */
+  function matchShortcut(event) {
+    const keyMatch = event.key.toLowerCase() === shortcutConfig.key.toLowerCase()
+    const shiftMatch = event.shiftKey === shortcutConfig.shiftKey
+    const ctrlMatch = event.ctrlKey === shortcutConfig.ctrlKey
+    const altMatch = event.altKey === shortcutConfig.altKey
+    return keyMatch && shiftMatch && ctrlMatch && altMatch
+  }
+
+  /**
+   * 获取当前快捷键显示文本
+   * @returns {string}
+   */
+  function getShortcutText() {
+    const parts = []
+    if (shortcutConfig.ctrlKey) parts.push('Ctrl')
+    if (shortcutConfig.shiftKey) parts.push('Shift')
+    if (shortcutConfig.altKey) parts.push('Alt')
+    parts.push(shortcutConfig.key.toUpperCase())
+    return parts.join(' + ')
+  }
+
+  /**
+   * 显示快捷键设置弹窗
+   */
+  function showShortcutSettings() {
+    const overlay = document.createElement('div')
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 99999;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    `
+
+    const dialog = document.createElement('div')
+    dialog.style.cssText = `
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      width: 90%;
+      max-width: 400px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    `
+
+    const title = document.createElement('h2')
+    title.textContent = '设置截图快捷键'
+    title.style.cssText = `
+      margin: 0 0 20px 0;
+      font-size: 18px;
+      color: #333;
+      text-align: center;
+    `
+
+    const currentShortcut = document.createElement('p')
+    currentShortcut.textContent = `当前快捷键: ${getShortcutText()}`
+    currentShortcut.style.cssText = `
+      text-align: center;
+      margin: 0 0 20px 0;
+      color: #666;
+      font-size: 14px;
+    `
+
+    const container = document.createElement('div')
+    container.style.cssText = 'display: flex; flex-direction: column; gap: 12px;'
+
+    // Ctrl键选项
+    const ctrlDiv = document.createElement('div')
+    ctrlDiv.style.cssText = 'display: flex; align-items: center; gap: 10px;'
+    const ctrlCheckbox = document.createElement('input')
+    ctrlCheckbox.type = 'checkbox'
+    ctrlCheckbox.checked = shortcutConfig.ctrlKey
+    ctrlCheckbox.style.cssText = 'width: 18px; height: 18px;'
+    const ctrlLabel = document.createElement('label')
+    ctrlLabel.textContent = 'Ctrl'
+    ctrlLabel.style.cssText = 'font-size: 14px; color: #333;'
+    ctrlDiv.appendChild(ctrlCheckbox)
+    ctrlDiv.appendChild(ctrlLabel)
+
+    // Shift键选项
+    const shiftDiv = document.createElement('div')
+    shiftDiv.style.cssText = 'display: flex; align-items: center; gap: 10px;'
+    const shiftCheckbox = document.createElement('input')
+    shiftCheckbox.type = 'checkbox'
+    shiftCheckbox.checked = shortcutConfig.shiftKey
+    shiftCheckbox.style.cssText = 'width: 18px; height: 18px;'
+    const shiftLabel = document.createElement('label')
+    shiftLabel.textContent = 'Shift'
+    shiftLabel.style.cssText = 'font-size: 14px; color: #333;'
+    shiftDiv.appendChild(shiftCheckbox)
+    shiftDiv.appendChild(shiftLabel)
+
+    // Alt键选项
+    const altDiv = document.createElement('div')
+    altDiv.style.cssText = 'display: flex; align-items: center; gap: 10px;'
+    const altCheckbox = document.createElement('input')
+    altCheckbox.type = 'checkbox'
+    altCheckbox.checked = shortcutConfig.altKey
+    altCheckbox.style.cssText = 'width: 18px; height: 18px;'
+    const altLabel = document.createElement('label')
+    altLabel.textContent = 'Alt'
+    altLabel.style.cssText = 'font-size: 14px; color: #333;'
+    altDiv.appendChild(altCheckbox)
+    altDiv.appendChild(altLabel)
+
+    // 按键输入
+    const keyDiv = document.createElement('div')
+    keyDiv.style.cssText = 'display: flex; flex-direction: column; gap: 6px;'
+    const keyLabel = document.createElement('label')
+    keyLabel.textContent = '按键'
+    keyLabel.style.cssText = 'font-size: 14px; color: #333;'
+    const keyInput = document.createElement('input')
+    keyInput.type = 'text'
+    keyInput.value = shortcutConfig.key
+    keyInput.maxLength = 1
+    keyInput.style.cssText = `
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 16px;
+      text-align: center;
+      text-transform: uppercase;
+    `
+
+    const hint = document.createElement('p')
+    hint.textContent = '提示：请输入单个字母或数字键'
+    hint.style.cssText = 'font-size: 12px; color: #999; margin: 4px 0 0 0;'
+
+    keyDiv.appendChild(keyLabel)
+    keyDiv.appendChild(keyInput)
+    keyDiv.appendChild(hint)
+
+    container.appendChild(ctrlDiv)
+    container.appendChild(shiftDiv)
+    container.appendChild(altDiv)
+    container.appendChild(keyDiv)
+
+    // 按钮区域
+    const buttons = document.createElement('div')
+    buttons.style.cssText = 'display: flex; gap: 12px; margin-top: 20px;'
+
+    const cancelBtn = document.createElement('button')
+    cancelBtn.textContent = '取消'
+    cancelBtn.style.cssText = `
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: #fff;
+      color: #666;
+      font-size: 14px;
+      cursor: pointer;
+    `
+    cancelBtn.addEventListener('click', () => document.body.removeChild(overlay))
+
+    const saveBtn = document.createElement('button')
+    saveBtn.textContent = '保存'
+    saveBtn.style.cssText = `
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      background: #007bff;
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+    `
+    saveBtn.addEventListener('click', () => {
+      const newKey = keyInput.value.toLowerCase()
+      if (!newKey.match(/^[a-zA-Z0-9]$/)) {
+        alert('请输入有效的按键（字母或数字）')
+        return
+      }
+
+      shortcutConfig = {
+        key: newKey,
+        shiftKey: shiftCheckbox.checked,
+        ctrlKey: ctrlCheckbox.checked,
+        altKey: altCheckbox.checked,
+      }
+
+      GM_setValue('videoCapture_key', shortcutConfig.key)
+      GM_setValue('videoCapture_shiftKey', shortcutConfig.shiftKey)
+      GM_setValue('videoCapture_ctrlKey', shortcutConfig.ctrlKey)
+      GM_setValue('videoCapture_altKey', shortcutConfig.altKey)
+
+      alert(`快捷键已设置为: ${getShortcutText()}`)
+      document.body.removeChild(overlay)
+    })
+
+    buttons.appendChild(cancelBtn)
+    buttons.appendChild(saveBtn)
+
+    dialog.appendChild(title)
+    dialog.appendChild(currentShortcut)
+    dialog.appendChild(container)
+    dialog.appendChild(buttons)
+    overlay.appendChild(dialog)
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) document.body.removeChild(overlay)
+    })
+
+    document.body.appendChild(overlay)
+  }
+
+  /**
    * 键盘事件处理函数
-   * 监听Shift+S组合键触发截图
+   * 监听自定义快捷键触发截图
    */
   function handleKeyDown(event) {
-    // 在可编辑区域不触发截图
     if (isEditableTarget(event.target)) return
-    if (event.shiftKey && event.key.toLowerCase() === 's') {
+    if (matchShortcut(event)) {
       event.preventDefault()
 
       const player = getCurrentPlayer()
       if (player) {
         capture(player)
       } else if (isInIframe()) {
-        // 在iframe中，向父页面发送请求
         window.parent.postMessage({ type: 'VIDEO_CAPTURE_REQUEST' }, '*')
       } else {
-        // 在主页面，向所有iframe发送截图指令
         const iframes = document.querySelectorAll('iframe')
         let found = false
         iframes.forEach((iframe) => {
@@ -444,6 +667,11 @@
    * 设置所有必要的劫持、监听器和事件处理
    */
   function init() {
+    // 注册油猴菜单命令
+    if (typeof GM_registerMenuCommand === 'function') {
+      GM_registerMenuCommand(`设置截图快捷键 (当前: ${getShortcutText()})`, showShortcutSettings)
+    }
+
     // 劫持attachShadow以支持Shadow DOM
     hackAttachShadow()
     // 劫持视频元素的属性设置方法
