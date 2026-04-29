@@ -1,5 +1,9 @@
 # Changelog
 
+## 202604300204
+
+- 优先选择鼠标悬停的视频，随后是正在播放中的视频，最后是视口中面积最大的视频（但视频必须得被`<video>`包裹）。
+
 ## 202604292335
 
 - 引入 `shadowHostMap`（WeakMap），实现 host→shadowRoot O(1) 反向查找，替代遍历搜索。
@@ -7,7 +11,6 @@
 - 为每个 shadowRoot 缓存首视频引用到 `_vsVideo`，hover 时优先使用缓存（免 `querySelector`），同时以 `isConnected` 校验避免 SPA 场景下引用失效。
 - `scanVideoElements` 清理已断开 shadowRoot 时同步删除 `shadowHostMap` 条目。
 - `hackAttachShadow` 和 `addShadowRoot` 事件处理器同步注册 WeakMap 映射 + 缓存 `_vsVideo`。
-- 优先选择鼠标悬停的视频，随后是正在播放中的视频，最后是视口中面积最大的视频。
 
 ## 202604292252
 
