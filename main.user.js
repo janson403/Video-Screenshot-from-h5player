@@ -37,7 +37,6 @@
   const CONFIG_KEY = 'vs_screenshot_config'
   const defaultConfig = {
     screenshotKey: 'S',
-    pauseAfterCapture: true,
   }
 
   const KEY_MAP = {
@@ -340,11 +339,6 @@
       }
 
       console.log('[VS] 截图成功', { title, w: canvas.width, h: canvas.height })
-
-      if (config.pauseAfterCapture && !video.paused) {
-        video.pause()
-        console.log('[VS] 已暂停定格画面')
-      }
 
       this.preview(canvas, title)
       return true
