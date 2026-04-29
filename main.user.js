@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202604300204
+// @version      202604300205
 // @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -420,6 +420,9 @@
         }
       }
     }
+
+    /* 鼠标不在任何视频上，清除悬停标记 */
+    activeVideo = null
   }
 
   function findBestVideo() {
