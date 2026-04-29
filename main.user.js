@@ -312,7 +312,7 @@
       const t = video.currentTime
       const ts = `${Math.floor(t / 60)}'${(t % 60).toFixed(2)}"`
 
-      const title = `screenshot_${document.title.replace(/[<>:"/\\|?*]/g, '_')}_${ts}`
+      const title = `${document.title.replace(/[<>:"/\\|?*]/g, '_')}_${ts}`
 
       /* CORS 已在原型劫持和 setupVideoWithCorsRecovery 中提前设置，
          此处不再重复设置（但保留兜底以防边缘情况） */
