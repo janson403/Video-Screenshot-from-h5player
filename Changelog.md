@@ -1,5 +1,12 @@
 # Changelog
 
+## 202604292252
+
+- 引入 `SUPPORTED_VIDEO_TAGS` 和 `SUPPORTED_SELECTOR` 常量，集中管理视频标签，便于扩展更多第三方视频标签。
+- `isVideoElement` / `scanVideoElements` 等函数改用泛化判断，非标准视频标签从硬编码 `bwp-video` 改为 `SUPPORTED_VIDEO_TAGS` 动态匹配。
+- 重构 `window._shadowDomList_` 和 `window._vs_hack_shadow_` 为模块内部变量，减少全局命名空间污染。
+- MutationObserver 扫描增加 100ms 防抖（`debounce`），降低频繁 DOM 变化的性能开销。
+
 ## 202604292132
 
 - 新增快捷键录制 UI，直接在页面浮层中录制组合键。

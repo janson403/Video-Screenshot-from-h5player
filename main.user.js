@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202604292132
+// @version      202604292252
 // @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -134,12 +134,26 @@
     return window.self !== window.top
   }
 
+  const SUPPORTED_VIDEO_TAGS = ['video', 'bwp-video']
+  const SUPPORTED_SELECTOR = SUPPORTED_VIDEO_TAGS.join(', ')
+
   function isVideoElement(el) {
     return (
       el instanceof HTMLVideoElement ||
       el.HTMLVideoElement === true ||
-      (el.tagName && el.tagName.toLowerCase() === 'bwp-video')
+      (el.tagName && SUPPORTED_VIDEO_TAGS.includes(el.tagName.toLowerCase()))
     )
+  }
+
+  function debounce(fn, delay) {
+    let timer = null
+    return function (...args) {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        fn.apply(this, args)
+      }, delay)
+    }
   }
 
   /* ============================================
@@ -358,6 +372,8 @@
    * 7. 视频元素查找 & DOM 监听
    * ============================================ */
   let activeVideo = null
+  let shadowDomList = []
+  let vsHackShadow = false
 
   /* 鼠标悬停追踪当前活动的视频（如 main.user.js） */
   function handleMouseOver(event) {
@@ -369,7 +385,7 @@
       }
       /* 检查 Shadow DOM 中的视频 */
       if (target.shadowRoot) {
-        const videoInShadow = target.shadowRoot.querySelector('video, bwp-video')
+        const videoInShadow = target.shadowRoot.querySelector(SUPPORTED_SELECTOR)
         if (videoInShadow) {
           activeVideo = videoInShadow
           break
@@ -389,15 +405,13 @@
       } catch (e) {}
     }
 
-    const allVideos = [...document.querySelectorAll('video, bwp-video')]
+    const allVideos = [...document.querySelectorAll(SUPPORTED_SELECTOR)]
     const shadowVideos = []
-    if (window._shadowDomList_) {
-      window._shadowDomList_.forEach((sr) => {
-        try {
-          sr.querySelectorAll('video, bwp-video').forEach((v) => shadowVideos.push(v))
-        } catch (e) {}
-      })
-    }
+    shadowDomList.forEach((sr) => {
+      try {
+        sr.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => shadowVideos.push(v))
+      } catch (e) {}
+    })
     const candidates = [...allVideos, ...shadowVideos]
     if (!candidates.length) return null
 
@@ -419,14 +433,16 @@
     if (!visible.length) return candidates.find((v) => v.videoWidth > 0) || candidates[0]
     if (visible.length === 1) return visible[0]
 
-    let best = visible[0],
-      bestArea = 0
+    let best = null,
+      bestScore = -1
     visible.forEach((v) => {
       try {
         const r = v.getBoundingClientRect()
-        const a = r.width * r.height
-        if (a > bestArea) {
-          bestArea = a
+        let score = r.width * r.height
+        /* 正在播放的视频获得额外权重 */
+        if (!v.paused && v.readyState > 2) score *= 2
+        if (score > bestScore) {
+          bestScore = score
           best = v
         }
       } catch (e) {}
@@ -436,36 +452,31 @@
 
   function scanVideoElements() {
     /* 清理已销毁的 Shadow DOM 列表 */
-    if (window._shadowDomList_) {
-      window._shadowDomList_ = window._shadowDomList_.filter(function (sr) {
-        return sr && sr.isConnected
-      })
-    }
+    shadowDomList = shadowDomList.filter(function (sr) {
+      return sr && sr.isConnected
+    })
     /* 扫描常规 DOM 中的视频 */
-    document.querySelectorAll('video, bwp-video').forEach((v) => {
-      if (v.tagName.toLowerCase() === 'bwp-video') v.HTMLVideoElement = true
+    document.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
+      if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
       setupVideoWithCorsRecovery(v)
     })
     /* 扫描 Shadow DOM 中的视频 */
-    if (window._shadowDomList_) {
-      window._shadowDomList_.forEach((sr) => {
-        try {
-          sr.querySelectorAll('video, bwp-video').forEach((v) => {
-            if (v.tagName.toLowerCase() === 'bwp-video') v.HTMLVideoElement = true
-            setupVideoWithCorsRecovery(v)
-          })
-        } catch (e) {}
-      })
-    }
+    shadowDomList.forEach((sr) => {
+      try {
+        sr.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
+          if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
+          setupVideoWithCorsRecovery(v)
+        })
+      } catch (e) {}
+    })
   }
 
   /* ============================================
    * 8. Shadow DOM 破解
    * ============================================ */
   function hackAttachShadow() {
-    if (window._vs_hack_shadow_) return
+    if (vsHackShadow) return
     try {
-      window._shadowDomList_ = window._shadowDomList_ || []
       window.Element.prototype._attachShadow = window.Element.prototype.attachShadow
       window.Element.prototype.attachShadow = function () {
         const arg = arguments
@@ -475,7 +486,7 @@
         if (arg[0] && arg[0].mode) arg[0].mode = 'open'
 
         const shadowRoot = this._attachShadow.apply(this, arg)
-        if (!window._shadowDomList_.includes(shadowRoot)) window._shadowDomList_.push(shadowRoot)
+        if (!shadowDomList.includes(shadowRoot)) shadowDomList.push(shadowRoot)
 
         /* 如果原是 closed 模式，伪装 shadowRoot 为 null 避免破坏站点行为 */
         if (isClosed) {
@@ -490,30 +501,31 @@
 
         /* 在新创建的 Shadow DOM 中扫描视频 */
         try {
-          shadowRoot.querySelectorAll('video, bwp-video').forEach((v) => {
-            if (v.tagName.toLowerCase() === 'bwp-video') v.HTMLVideoElement = true
+          shadowRoot.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
+            if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
             setupVideoWithCorsRecovery(v)
           })
         } catch (e) {}
 
         return shadowRoot
       }
-      window._vs_hack_shadow_ = true
+      vsHackShadow = true
     } catch (e) {
       console.warn('[VS] Shadow DOM 破解失败')
     }
   }
 
   function initDOMObserver() {
-    const observer = new MutationObserver(() => scanVideoElements())
+    const debouncedScan = debounce(scanVideoElements, 100)
+    const observer = new MutationObserver(() => debouncedScan())
     observer.observe(document.documentElement, { childList: true, subtree: true })
     document.addEventListener('addShadowRoot', (e) => {
       if (e.detail && e.detail.shadowRoot) {
         const sr = e.detail.shadowRoot
-        if (!window._shadowDomList_.includes(sr)) window._shadowDomList_.push(sr)
+        if (!shadowDomList.includes(sr)) shadowDomList.push(sr)
         try {
-          sr.querySelectorAll('video, bwp-video').forEach((v) => {
-            if (v.tagName.toLowerCase() === 'bwp-video') v.HTMLVideoElement = true
+          sr.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
+            if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
             setupVideoWithCorsRecovery(v)
           })
         } catch (e) {}
