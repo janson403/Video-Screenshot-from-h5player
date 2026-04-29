@@ -27,7 +27,6 @@
     Object: { defineProperty: Object.defineProperty },
     addEventListener: EventTarget.prototype.addEventListener,
     removeEventListener: EventTarget.prototype.removeEventListener,
-    setAttribute: HTMLVideoElement.prototype.setAttribute,
     srcDescriptor: Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src') || null,
   }
 
@@ -427,7 +426,7 @@
     /* 优先使用鼠标悬停追踪的视频 */
     if (activeVideo && isVideoElement(activeVideo)) {
       try {
-        if (document.contains(activeVideo)) {
+        if (activeVideo.isConnected) {
           return activeVideo
         }
       } catch (e) {}
@@ -471,6 +470,8 @@
         let score = r.width * r.height
         /* 正在播放的视频获得额外权重 */
         if (!v.paused && v.readyState > 2) score *= 2
+        /* 鼠标悬停的视频优先级最高，无视面积 */
+        if (v === activeVideo) score = Infinity
         if (score > bestScore) {
           bestScore = score
           best = v
