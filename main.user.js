@@ -12,7 +12,7 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @run-at       document-start
-// @downloadURL  https://raw.giteeusercontent.com/jason403/video-Screenshot-from-h5player/raw/master/main.user.js
+// @downloadURL  https://raw.giteeusercontent.com/jason403/Video-Screenshot-from-h5player/raw/master/main.user.js
 // @updateURL    https://raw.giteeusercontent.com/jason403/Video-Screenshot-from-h5player/raw/master/main.user.js
 // @license      GPL
 // ==/UserScript==
