@@ -1,6 +1,6 @@
 # Changelog
 
-## 202604292302
+## 202604292335
 
 - 引入 `shadowHostMap`（WeakMap），实现 host→shadowRoot O(1) 反向查找，替代遍历搜索。
 - 重构 `handleMouseOver` 为三层悬停策略：parentNode 快速路径 + `_vsVideo` 缓存命中 → composedPath 正向直击视频 → composedPath 反向 host 查找跨越 closed shadow 边界。

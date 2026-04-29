@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202604292315
+// @version      202604292335
 // @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -165,6 +165,28 @@
    * 对已加载视频强制 reload 以确保 crossoverigin 生效
    * 附加 error 事件监听：若因 CORS 加载失败，自动移除 crossorigin 并重试
    */
+  /**
+   * 等元数据就绪再恢复进度，比直接赋 currentTime 更稳定
+   * 提取为公共函数，避免代码重复
+   */
+  function seekToTimeAfterLoad(video, currentTime) {
+    let seekDone = false
+    const seekToTime = function () {
+      if (seekDone) return
+      seekDone = true
+      try {
+        video.currentTime = currentTime
+      } catch (e) {}
+      video.removeEventListener('loadedmetadata', seekToTime)
+      video.removeEventListener('canplay', seekToTime)
+    }
+    video.addEventListener('loadedmetadata', seekToTime)
+    video.addEventListener('canplay', seekToTime)
+
+    /* 兜底：3秒后仍未触发则强试 */
+    setTimeout(seekToTime, 3000)
+  }
+
   function setupVideoWithCorsRecovery(video) {
     if (video._corsSetupDone) return
     video._corsSetupDone = true
@@ -188,22 +210,7 @@
         video.src = originalSrc
         if (!paused) video.play().catch(() => {})
 
-        /* 等元数据就绪再恢复进度，比直接赋 currentTime 更稳定 */
-        let seekDone = false
-        const seekToTime = function () {
-          if (seekDone) return
-          seekDone = true
-          try {
-            video.currentTime = currentTime
-          } catch (e) {}
-          video.removeEventListener('loadedmetadata', seekToTime)
-          video.removeEventListener('canplay', seekToTime)
-        }
-        video.addEventListener('loadedmetadata', seekToTime)
-        video.addEventListener('canplay', seekToTime)
-
-        /* 兜底：3秒后仍未触发则强试 */
-        setTimeout(seekToTime, 3000)
+        seekToTimeAfterLoad(video, currentTime)
       }, 0)
     }
 
@@ -236,20 +243,7 @@
           video.src = src
           if (!paused) video.play().catch(() => {})
 
-          /* 等元数据就绪再恢复进度 */
-          let seekDone = false
-          const seekToTime = function () {
-            if (seekDone) return
-            seekDone = true
-            try {
-              video.currentTime = currentTime
-            } catch (e) {}
-            video.removeEventListener('loadedmetadata', seekToTime)
-            video.removeEventListener('canplay', seekToTime)
-          }
-          video.addEventListener('loadedmetadata', seekToTime)
-          video.addEventListener('canplay', seekToTime)
-          setTimeout(seekToTime, 3000)
+          seekToTimeAfterLoad(video, currentTime)
         }, 0)
       }
     })
@@ -272,7 +266,6 @@
     const originalSetAttribute = HTMLVideoElement.prototype.setAttribute
     HTMLVideoElement.prototype.setAttribute = function (name, value) {
       if (name === 'src' && !this.hasAttribute('crossorigin')) {
-        this._corsSet = true
         originalSetAttribute.call(this, 'crossorigin', 'anonymous')
       }
       return originalSetAttribute.call(this, name, value)
@@ -295,7 +288,6 @@
         get: descriptor.get,
         set: function (value) {
           if (!this.hasAttribute('crossorigin')) {
-            this._corsSet = true
             this.setAttribute('crossorigin', 'anonymous')
           }
           return originalSet.call(this, value)
