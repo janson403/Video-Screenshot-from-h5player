@@ -1,52 +1,166 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202604281355
+// @version      2026.04.29.21.32
 // @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
 // @match        *://*/*
-// @run-at       document-start
-// @grant        GM_getValue
-// @grant        GM_setValue
+// @grant        unsafeWindow
 // @grant        GM_registerMenuCommand
-// @downloadURL  https://raw.giteeusercontent.com/jason403/Video-Screenshot-from-h5player/raw/master/main.user.js
+// @grant        GM_unregisterMenuCommand
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
+// @run-at       document-start
+// @downloadURL  https://raw.giteeusercontent.com/jason403/video-Screenshot-from-h5player/raw/master/main.user.js
 // @updateURL    https://raw.giteeusercontent.com/jason403/Video-Screenshot-from-h5player/raw/master/main.user.js
+// @license      GPL
 // ==/UserScript==
 
 ;(function () {
   'use strict'
 
-  // 支持的视频标签类型
-  const supportMediaTags = ['video', 'bwp-video']
-  // 存储所有Shadow DOM根节点的列表
-  let shadowDomList = []
-  // 当前活跃的视频播放器实例
-  let activePlayerInstance = null
-
-  // 快捷键配置
-  let shortcutConfig = {
-    key: GM_getValue('videoCapture_key', 's'),
-    shiftKey: GM_getValue('videoCapture_shiftKey', true),
-    ctrlKey: GM_getValue('videoCapture_ctrlKey', false),
-    altKey: GM_getValue('videoCapture_altKey', false),
+  /* ============================================
+   * 1. 保存原生函数（必须在任何劫持前保存）
+   * ============================================ */
+  const native = {
+    Object: { defineProperty: Object.defineProperty },
+    addEventListener: EventTarget.prototype.addEventListener,
+    removeEventListener: EventTarget.prototype.removeEventListener,
+    setAttribute: HTMLVideoElement.prototype.setAttribute,
+    srcDescriptor: Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src') || null,
   }
 
-  /**
-   * 设置视频元素的CORS属性，解决跨域截图问题
-   * @param {HTMLVideoElement} video - 视频元素
-   */
-  function setVideoCors(video) {
-    // 参数校验：非视频元素或已设置过CORS则直接返回
-    if (!video || !(video instanceof HTMLVideoElement)) return
-    if (video._corsSet) return
-    video._corsSet = true
+  /* ============================================
+   * 2. 配置管理
+   * ============================================ */
+  const CONFIG_KEY = 'vs_screenshot_config'
+  const defaultConfig = {
+    screenshotKey: 'S',
+    pauseAfterCapture: true,
+  }
 
-    // 添加crossorigin属性以允许跨域访问视频帧
+  const KEY_MAP = {
+    A: 65,
+    B: 66,
+    C: 67,
+    D: 68,
+    E: 69,
+    F: 70,
+    G: 71,
+    H: 72,
+    I: 73,
+    J: 74,
+    K: 75,
+    L: 76,
+    M: 77,
+    N: 78,
+    O: 79,
+    P: 80,
+    Q: 81,
+    R: 82,
+    S: 83,
+    T: 84,
+    U: 85,
+    V: 86,
+    W: 87,
+    X: 88,
+    Y: 89,
+    Z: 90,
+    0: 48,
+    1: 49,
+    2: 50,
+    3: 51,
+    4: 52,
+    5: 53,
+    6: 54,
+    7: 55,
+    8: 56,
+    9: 57,
+    Enter: 13,
+    Escape: 27,
+    Space: 32,
+    F1: 112,
+    F2: 113,
+    F3: 114,
+    F4: 115,
+    F5: 116,
+    F6: 117,
+    F7: 118,
+    F8: 119,
+    F9: 120,
+    F10: 121,
+    F11: 122,
+    F12: 123,
+    ';': 186,
+    '=': 187,
+    ',': 188,
+    '-': 189,
+    '.': 190,
+    '/': 191,
+    '`': 192,
+    '[': 219,
+    '\\': 220,
+    ']': 221,
+    "'": 222,
+  }
+
+  function loadConfig() {
+    try {
+      const saved = GM_getValue(CONFIG_KEY, null)
+      if (saved && typeof saved === 'object') {
+        return Object.assign({}, defaultConfig, saved)
+      }
+    } catch (e) {
+      console.warn('[VS] 加载配置失败，使用默认配置')
+    }
+    return Object.assign({}, defaultConfig)
+  }
+
+  function saveConfig(conf) {
+    try {
+      GM_setValue(CONFIG_KEY, conf)
+    } catch (e) {
+      console.warn('[VS] 保存配置失败')
+    }
+  }
+
+  let config = loadConfig()
+
+  /* ============================================
+   * 3. 工具函数
+   * ============================================ */
+  function isInIframe() {
+    return window.self !== window.top
+  }
+
+  function isVideoElement(el) {
+    return (
+      el instanceof HTMLVideoElement ||
+      el.HTMLVideoElement === true ||
+      (el.tagName && el.tagName.toLowerCase() === 'bwp-video')
+    )
+  }
+
+  /* ============================================
+   * 4. CORS 激进策略 + 错误自动恢复
+   * ============================================ */
+
+  /**
+   * 设置视频 CORS + reload（激进策略，如 main.user.js）
+   * 对已加载视频强制 reload 以确保 crossoverigin 生效
+   * 附加 error 事件监听：若因 CORS 加载失败，自动移除 crossorigin 并重试
+   */
+  function setupVideoWithCorsRecovery(video) {
+    if (video._corsSetupDone) return
+    video._corsSetupDone = true
+
+    /* 首次设置 crossorigin */
     if (!video.hasAttribute('crossorigin')) {
       video.setAttribute('crossorigin', 'anonymous')
     }
 
-    // 如果视频已加载，重新加载以应用CORS设置
+    /* 如果视频已加载，强制重载以应用CORS设置 */
     if (video.src && video.readyState > 0) {
       const originalSrc = video.src
       const currentTime = video.currentTime
@@ -56,18 +170,89 @@
       video.load()
 
       setTimeout(() => {
+        if (!originalSrc) return
         video.src = originalSrc
-        video.currentTime = currentTime
-        if (!paused) {
-          video.play().catch(() => {})
+        if (!paused) video.play().catch(() => {})
+
+        /* 等元数据就绪再恢复进度，比直接赋 currentTime 更稳定 */
+        let seekDone = false
+        const seekToTime = function () {
+          if (seekDone) return
+          seekDone = true
+          try {
+            video.currentTime = currentTime
+          } catch (e) {}
+          video.removeEventListener('loadedmetadata', seekToTime)
+          video.removeEventListener('canplay', seekToTime)
         }
+        video.addEventListener('loadedmetadata', seekToTime)
+        video.addEventListener('canplay', seekToTime)
+
+        /* 兜底：3秒后仍未触发则强试 */
+        setTimeout(seekToTime, 3000)
       }, 0)
     }
+
+    /* 错误恢复：CORS加载失败时自动移除属性并重试 */
+    video.addEventListener('error', function onCorsError() {
+      if (!video.hasAttribute('crossorigin')) return
+      if (video._corsRecovering) return
+
+      const mediaError = video.error
+      /* MEDIA_ERR_SRC_NOT_SUPPORTED(4) 或 MEDIA_ERR_NETWORK(2) 可能是 CORS 导致 */
+      if (
+        mediaError &&
+        (mediaError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ||
+          mediaError.code === MediaError.MEDIA_ERR_NETWORK)
+      ) {
+        console.warn('[VS] 视频因CORS限制加载失败，自动移除crossorigin重试')
+
+        video._corsRecovering = true
+        const paused = video.paused
+        const currentTime = video.currentTime
+        const src = video.currentSrc || video.src
+
+        video.removeAttribute('crossorigin')
+
+        video.src = ''
+        video.load()
+
+        setTimeout(() => {
+          if (!src) return
+          video.src = src
+          if (!paused) video.play().catch(() => {})
+
+          /* 等元数据就绪再恢复进度 */
+          let seekDone = false
+          const seekToTime = function () {
+            if (seekDone) return
+            seekDone = true
+            try {
+              video.currentTime = currentTime
+            } catch (e) {}
+            video.removeEventListener('loadedmetadata', seekToTime)
+            video.removeEventListener('canplay', seekToTime)
+          }
+          video.addEventListener('loadedmetadata', seekToTime)
+          video.addEventListener('canplay', seekToTime)
+          setTimeout(seekToTime, 3000)
+        }, 0)
+      }
+    })
+
+    /* playing 事件追踪：无悬停时设为当前目标，不覆盖鼠标悬停优先 */
+    video.addEventListener('playing', function onPlaying() {
+      if (!activeVideo) activeVideo = video
+    })
   }
 
+  /* ============================================
+   * 5. 原型劫持（自动为视频添加 crossorigin）
+   * ============================================ */
+
   /**
-   * 劫持HTMLVideoElement的setAttribute方法
-   * 当设置src属性时自动添加crossorigin属性
+   * 劫持 HTMLVideoElement.prototype.setAttribute
+   * 当设置 src 时自动插入 crossorigin
    */
   function hijackVideoSetAttribute() {
     const originalSetAttribute = HTMLVideoElement.prototype.setAttribute
@@ -81,11 +266,11 @@
   }
 
   /**
-   * 劫持HTMLMediaElement的src属性setter
-   * 通过属性赋值方式设置src时自动添加crossorigin
+   * 劫持 HTMLMediaElement.prototype.src 属性 setter
+   * 通过 video.src = '...' 赋值时自动插入 crossorigin
    */
   function hijackVideoSrcProperty() {
-    const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src')
+    const descriptor = native.srcDescriptor
     if (!descriptor) return
 
     const originalSet = descriptor.set
@@ -105,530 +290,250 @@
     }
   }
 
-  /**
-   * DOM元素就绪监听器
-   * 使用MutationObserver监听DOM变化，当匹配的元素出现时执行回调
-   * @param {string} selector - CSS选择器
-   * @param {Function} fn - 回调函数
-   * @param {ShadowRoot} [shadowRoot] - Shadow DOM根节点（可选）
-   * @returns {MutationObserver} - 返回观察器实例
-   */
-  function ready(selector, fn, shadowRoot) {
-    const win = window
-    const doc = shadowRoot || win.document
-    const MutationObserver = win.MutationObserver || win.WebKitMutationObserver
-    let observer
+  /* ============================================
+   * 6. 截图核心
+   * ============================================ */
+  const videoCapturer = {
+    capture(video) {
+      if (!video || !isVideoElement(video)) {
+        console.warn('[VS] 无效的视频元素')
+        return false
+      }
+      if (!video.videoWidth || !video.videoHeight) {
+        console.warn('[VS] 视频尚未加载出画面')
+        return false
+      }
 
-    // 检查并处理已存在的匹配元素
-    function check() {
-      const elements = doc.querySelectorAll(selector)
-      elements.forEach(function (element) {
-        if (!element._isMutationReady_) {
-          element._isMutationReady_ = true
-          fn.call(element, element)
-        }
-      })
-    }
+      const t = video.currentTime
+      const ts = `${Math.floor(t / 60)}'${(t % 60).toFixed(2)}"`
 
-    check()
+      const title = `screenshot_${document.title.replace(/[<>:"/\\|?*]/g, '_')}_${ts}`
 
-    // 创建MutationObserver监听DOM变化
-    if (!observer) {
-      observer = new MutationObserver(check)
-      observer.observe(shadowRoot || doc.documentElement, {
-        childList: true,
-        subtree: true,
-      })
-    }
+      /* CORS 已在原型劫持和 setupVideoWithCorsRecovery 中提前设置，
+         此处不再重复设置（但保留兜底以防边缘情况） */
+      if (!video.hasAttribute('crossorigin')) {
+        try {
+          video.setAttribute('crossorigin', 'anonymous')
+        } catch (e) {}
+      }
 
-    return observer
+      const canvas = document.createElement('canvas')
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        console.warn('[VS] 无法获取 canvas 上下文')
+        return false
+      }
+
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      } catch (e) {
+        console.warn('[VS] drawImage 失败（CORS?）', e)
+        return false
+      }
+
+      console.log('[VS] 截图成功', { title, w: canvas.width, h: canvas.height })
+
+      if (config.pauseAfterCapture && !video.paused) {
+        video.pause()
+        console.log('[VS] 已暂停定格画面')
+      }
+
+      this.preview(canvas, title)
+      return true
+    },
+
+    preview(canvas, title) {
+      canvas.style = 'max-width:100%'
+      const previewPage = window.open('', '_blank')
+      previewPage.document.title = `capture preview - ${title || 'Untitled'}`
+      previewPage.document.body.style.textAlign = 'center'
+      previewPage.document.body.style.margin = '0'
+      previewPage.document.body.appendChild(canvas)
+    },
   }
 
-  /**
-   * 劫持Element.prototype.attachShadow方法
-   * 将所有closed模式的Shadow DOM强制改为open模式，以便访问其中的视频元素
-   */
-  function hackAttachShadow() {
-    if (window._hasHackAttachShadow_) return
-    try {
-      shadowDomList = []
-      window._shadowDomList_ = shadowDomList
+  /* ============================================
+   * 7. 视频元素查找 & DOM 监听
+   * ============================================ */
+  let activeVideo = null
 
-      // 保存原始方法
-      Element.prototype._attachShadow = Element.prototype.attachShadow
-      Element.prototype.attachShadow = function () {
+  /* 鼠标悬停追踪当前活动的视频（如 main.user.js） */
+  function handleMouseOver(event) {
+    let target = event.target
+    while (target) {
+      if (isVideoElement(target)) {
+        activeVideo = target
+        break
+      }
+      /* 检查 Shadow DOM 中的视频 */
+      if (target.shadowRoot) {
+        const videoInShadow = target.shadowRoot.querySelector('video, bwp-video')
+        if (videoInShadow) {
+          activeVideo = videoInShadow
+          break
+        }
+      }
+      target = target.parentNode
+    }
+  }
+
+  function findBestVideo() {
+    /* 优先使用鼠标悬停追踪的视频 */
+    if (activeVideo && isVideoElement(activeVideo)) {
+      try {
+        if (document.contains(activeVideo)) {
+          return activeVideo
+        }
+      } catch (e) {}
+    }
+
+    const allVideos = [...document.querySelectorAll('video, bwp-video')]
+    const shadowVideos = []
+    if (window._shadowDomList_) {
+      window._shadowDomList_.forEach((sr) => {
+        try {
+          sr.querySelectorAll('video, bwp-video').forEach((v) => shadowVideos.push(v))
+        } catch (e) {}
+      })
+    }
+    const candidates = [...allVideos, ...shadowVideos]
+    if (!candidates.length) return null
+
+    const visible = candidates.filter((v) => {
+      try {
+        const r = v.getBoundingClientRect()
+        return (
+          r.width > 100 &&
+          r.height > 50 &&
+          r.top < window.innerHeight &&
+          r.bottom > 0 &&
+          r.left < window.innerWidth &&
+          r.right > 0
+        )
+      } catch (e) {
+        return false
+      }
+    })
+    if (!visible.length) return candidates.find((v) => v.videoWidth > 0) || candidates[0]
+    if (visible.length === 1) return visible[0]
+
+    let best = visible[0],
+      bestArea = 0
+    visible.forEach((v) => {
+      try {
+        const r = v.getBoundingClientRect()
+        const a = r.width * r.height
+        if (a > bestArea) {
+          bestArea = a
+          best = v
+        }
+      } catch (e) {}
+    })
+    return best
+  }
+
+  function scanVideoElements() {
+    /* 清理已销毁的 Shadow DOM 列表 */
+    if (window._shadowDomList_) {
+      window._shadowDomList_ = window._shadowDomList_.filter(function (sr) {
+        return sr && sr.isConnected
+      })
+    }
+    /* 扫描常规 DOM 中的视频 */
+    document.querySelectorAll('video, bwp-video').forEach((v) => {
+      if (v.tagName.toLowerCase() === 'bwp-video') v.HTMLVideoElement = true
+      setupVideoWithCorsRecovery(v)
+    })
+    /* 扫描 Shadow DOM 中的视频 */
+    if (window._shadowDomList_) {
+      window._shadowDomList_.forEach((sr) => {
+        try {
+          sr.querySelectorAll('video, bwp-video').forEach((v) => {
+            if (v.tagName.toLowerCase() === 'bwp-video') v.HTMLVideoElement = true
+            setupVideoWithCorsRecovery(v)
+          })
+        } catch (e) {}
+      })
+    }
+  }
+
+  /* ============================================
+   * 8. Shadow DOM 破解
+   * ============================================ */
+  function hackAttachShadow() {
+    if (window._vs_hack_shadow_) return
+    try {
+      window._shadowDomList_ = window._shadowDomList_ || []
+      window.Element.prototype._attachShadow = window.Element.prototype.attachShadow
+      window.Element.prototype.attachShadow = function () {
         const arg = arguments
         const isClosed = arg[0] && arg[0].mode === 'closed'
 
-        // 将closed模式强制改为open模式
-        if (arg[0] && arg[0].mode) {
-          arg[0].mode = 'open'
-        }
+        /* 改为 open 以便访问内部 video */
+        if (arg[0] && arg[0].mode) arg[0].mode = 'open'
+
         const shadowRoot = this._attachShadow.apply(this, arg)
-        shadowDomList.push(shadowRoot)
-        shadowRoot._shadowHost = this
+        if (!window._shadowDomList_.includes(shadowRoot)) window._shadowDomList_.push(shadowRoot)
 
-        // 触发自定义事件通知Shadow DOM创建
-        const shadowEvent = new window.CustomEvent('addShadowRoot', {
-          shadowRoot,
-          detail: { shadowRoot, message: 'addShadowRoot', time: new Date() },
-          bubbles: true,
-          cancelable: true,
-        })
-        document.dispatchEvent(shadowEvent)
-
-        // 如果原本是closed模式，伪装成closed（外部访问shadowRoot返回null）
+        /* 如果原是 closed 模式，伪装 shadowRoot 为 null 避免破坏站点行为 */
         if (isClosed) {
-          Object.defineProperty(this, 'shadowRoot', {
+          native.Object.defineProperty(this, 'shadowRoot', {
+            configurable: true,
+            enumerable: true,
             get() {
               return null
             },
           })
         }
 
-        // 在新创建的Shadow DOM中监听视频元素
-        supportMediaTags.forEach((tagName) => {
-          ready(
-            tagName,
-            function (element) {
-              if (element.tagName.toLowerCase() === 'bwp-video') {
-                element.HTMLVideoElement = true
-              }
-              setVideoCors(element)
-            },
-            shadowRoot,
-          )
-        })
+        /* 在新创建的 Shadow DOM 中扫描视频 */
+        try {
+          shadowRoot.querySelectorAll('video, bwp-video').forEach((v) => {
+            if (v.tagName.toLowerCase() === 'bwp-video') v.HTMLVideoElement = true
+            setupVideoWithCorsRecovery(v)
+          })
+        } catch (e) {}
 
         return shadowRoot
       }
-      window._hasHackAttachShadow_ = true
-    } catch (e) {}
+      window._vs_hack_shadow_ = true
+    } catch (e) {
+      console.warn('[VS] Shadow DOM 破解失败')
+    }
   }
 
-  /**
-   * 判断元素是否为视频元素
-   * @param {HTMLElement} element - 待判断的元素
-   * @returns {boolean}
-   */
-  function isVideoElement(element) {
-    return (
-      element instanceof HTMLVideoElement ||
-      element.HTMLVideoElement === true ||
-      (element.tagName && element.tagName.toLowerCase() === 'bwp-video')
-    )
-  }
-
-  /**
-   * 判断目标元素是否为可编辑区域（避免在输入时触发截图）
-   * @param {HTMLElement} target - 目标元素
-   * @returns {boolean}
-   */
-  function isEditableTarget(target) {
-    return (
-      target.isContentEditable ||
-      target.tagName === 'INPUT' ||
-      target.tagName === 'TEXTAREA' ||
-      target.tagName === 'SELECT'
-    )
-  }
-
-  /**
-   * 判断当前页面是否在iframe中
-   * @returns {boolean}
-   */
-  function isInIframe() {
-    return window.self !== window.top
-  }
-
-  /**
-   * 判断元素是否在视口中
-   * @param {HTMLElement} element - 待判断的元素
-   * @returns {boolean}
-   */
-  function isInViewPort(element) {
-    if (!element) return false
-    const rect = element.getBoundingClientRect()
-    return (
-      rect.top >= 0 &&
-      rect.left >= 0 &&
-      rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
-      rect.right <= (window.innerWidth || document.documentElement.clientWidth)
-    )
-  }
-
-  /**
-   * 获取所有视频播放器列表（包括常规DOM和Shadow DOM）
-   * @returns {HTMLElement[]} - 视频元素数组
-   */
-  function getPlayerList() {
-    const list = []
-
-    // 在指定上下文中查找视频元素
-    function findPlayer(context) {
-      supportMediaTags.forEach((tagName) => {
+  function initDOMObserver() {
+    const observer = new MutationObserver(() => scanVideoElements())
+    observer.observe(document.documentElement, { childList: true, subtree: true })
+    document.addEventListener('addShadowRoot', (e) => {
+      if (e.detail && e.detail.shadowRoot) {
+        const sr = e.detail.shadowRoot
+        if (!window._shadowDomList_.includes(sr)) window._shadowDomList_.push(sr)
         try {
-          context.querySelectorAll(tagName).forEach(function (player) {
-            if (player.tagName.toLowerCase() === 'bwp-video') {
-              player.HTMLVideoElement = true
-            }
-            if (isVideoElement(player) && !list.includes(player)) {
-              list.push(player)
-            }
+          sr.querySelectorAll('video, bwp-video').forEach((v) => {
+            if (v.tagName.toLowerCase() === 'bwp-video') v.HTMLVideoElement = true
+            setupVideoWithCorsRecovery(v)
           })
         } catch (e) {}
-      })
-    }
-
-    // 在常规DOM中查找
-    findPlayer(document)
-
-    // 在所有Shadow DOM中查找
-    if (shadowDomList && shadowDomList.length > 0) {
-      shadowDomList.forEach(function (shadowRoot) {
-        findPlayer(shadowRoot)
-      })
-    }
-
-    return list
-  }
-
-  /**
-   * 获取当前活动的视频播放器
-   * 优先返回鼠标悬停的播放器，否则返回视口中最大的视频
-   * @returns {HTMLElement|null}
-   */
-  function getCurrentPlayer() {
-    // 优先检查缓存的活跃播放器
-    if (activePlayerInstance && isVideoElement(activePlayerInstance)) {
-      try {
-        if (document.contains(activePlayerInstance)) {
-          return activePlayerInstance
-        }
-      } catch (e) {}
-    }
-
-    const mediaList = getPlayerList().filter(isVideoElement)
-    if (mediaList.length === 0) return null
-
-    // 优先选择视口中的视频
-    const visibleMedia = mediaList.filter(isInViewPort)
-    if (visibleMedia.length > 0) {
-      // 返回视口中面积最大的视频
-      let largestVideo = visibleMedia[0]
-      let largestArea = 0
-      visibleMedia.forEach((video) => {
-        const rect = video.getBoundingClientRect()
-        const area = rect.width * rect.height
-        if (area > largestArea) {
-          largestArea = area
-          largestVideo = video
-        }
-      })
-      return largestVideo
-    }
-
-    // 返回最后找到的视频作为后备
-    return mediaList[mediaList.length - 1]
-  }
-
-  /**
-   * 在新窗口中预览截图
-   * @param {HTMLCanvasElement} canvas - 包含截图的canvas元素
-   */
-  function preview(canvas) {
-    canvas.style = 'max-width:100%'
-    const previewPage = window.open('', '_blank')
-    previewPage.document.title = `capture preview`
-    previewPage.document.body.style.textAlign = 'center'
-    previewPage.document.body.appendChild(canvas)
-  }
-
-  /**
-   * 执行视频截图
-   * @param {HTMLVideoElement} video - 视频元素
-   * @returns {HTMLCanvasElement|false} - 返回canvas元素或false
-   */
-  function capture(video) {
-    if (!video) return false
-    // readyState >= 2 表示至少有一帧可用于截图
-    if (video.readyState < 2) return false
-
-    try {
-      const canvas = document.createElement('canvas')
-      // 使用视频的实际尺寸或后备尺寸
-      canvas.width = video.videoWidth || video.width || 1920
-      canvas.height = video.videoHeight || video.height || 1080
-      const context = canvas.getContext('2d')
-      context.drawImage(video, 0, 0, canvas.width, canvas.height)
-      preview(canvas)
-      return canvas
-    } catch (e) {
-      console.error('[video-capture] capture failed', e)
-      return false
-    }
-  }
-
-  /**
-   * 检查是否匹配自定义快捷键
-   * @param {KeyboardEvent} event - 键盘事件
-   * @returns {boolean}
-   */
-  function matchShortcut(event) {
-    const keyMatch = event.key.toLowerCase() === shortcutConfig.key.toLowerCase()
-    const shiftMatch = event.shiftKey === shortcutConfig.shiftKey
-    const ctrlMatch = event.ctrlKey === shortcutConfig.ctrlKey
-    const altMatch = event.altKey === shortcutConfig.altKey
-    return keyMatch && shiftMatch && ctrlMatch && altMatch
-  }
-
-  /**
-   * 获取当前快捷键显示文本
-   * @returns {string}
-   */
-  function getShortcutText() {
-    const parts = []
-    if (shortcutConfig.ctrlKey) parts.push('Ctrl')
-    if (shortcutConfig.shiftKey) parts.push('Shift')
-    if (shortcutConfig.altKey) parts.push('Alt')
-    parts.push(shortcutConfig.key.toUpperCase())
-    return parts.join(' + ')
-  }
-
-  /**
-   * 显示快捷键设置弹窗
-   */
-  function showShortcutSettings() {
-    const overlay = document.createElement('div')
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      z-index: 99999;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    `
-
-    const dialog = document.createElement('div')
-    dialog.style.cssText = `
-      background: #fff;
-      border-radius: 12px;
-      padding: 24px;
-      width: 90%;
-      max-width: 400px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-    `
-
-    const title = document.createElement('h2')
-    title.textContent = '设置截图快捷键'
-    title.style.cssText = `
-      margin: 0 0 20px 0;
-      font-size: 18px;
-      color: #333;
-      text-align: center;
-    `
-
-    const currentShortcut = document.createElement('p')
-    currentShortcut.textContent = `当前快捷键: ${getShortcutText()}`
-    currentShortcut.style.cssText = `
-      text-align: center;
-      margin: 0 0 20px 0;
-      color: #666;
-      font-size: 14px;
-    `
-
-    const container = document.createElement('div')
-    container.style.cssText = 'display: flex; flex-direction: column; gap: 12px;'
-
-    // Ctrl键选项
-    const ctrlDiv = document.createElement('div')
-    ctrlDiv.style.cssText = 'display: flex; align-items: center; gap: 10px;'
-    const ctrlCheckbox = document.createElement('input')
-    ctrlCheckbox.type = 'checkbox'
-    ctrlCheckbox.checked = shortcutConfig.ctrlKey
-    ctrlCheckbox.style.cssText = 'width: 18px; height: 18px;'
-    const ctrlLabel = document.createElement('label')
-    ctrlLabel.textContent = 'Ctrl'
-    ctrlLabel.style.cssText = 'font-size: 14px; color: #333;'
-    ctrlDiv.appendChild(ctrlCheckbox)
-    ctrlDiv.appendChild(ctrlLabel)
-
-    // Shift键选项
-    const shiftDiv = document.createElement('div')
-    shiftDiv.style.cssText = 'display: flex; align-items: center; gap: 10px;'
-    const shiftCheckbox = document.createElement('input')
-    shiftCheckbox.type = 'checkbox'
-    shiftCheckbox.checked = shortcutConfig.shiftKey
-    shiftCheckbox.style.cssText = 'width: 18px; height: 18px;'
-    const shiftLabel = document.createElement('label')
-    shiftLabel.textContent = 'Shift'
-    shiftLabel.style.cssText = 'font-size: 14px; color: #333;'
-    shiftDiv.appendChild(shiftCheckbox)
-    shiftDiv.appendChild(shiftLabel)
-
-    // Alt键选项
-    const altDiv = document.createElement('div')
-    altDiv.style.cssText = 'display: flex; align-items: center; gap: 10px;'
-    const altCheckbox = document.createElement('input')
-    altCheckbox.type = 'checkbox'
-    altCheckbox.checked = shortcutConfig.altKey
-    altCheckbox.style.cssText = 'width: 18px; height: 18px;'
-    const altLabel = document.createElement('label')
-    altLabel.textContent = 'Alt'
-    altLabel.style.cssText = 'font-size: 14px; color: #333;'
-    altDiv.appendChild(altCheckbox)
-    altDiv.appendChild(altLabel)
-
-    // 按键输入
-    const keyDiv = document.createElement('div')
-    keyDiv.style.cssText = 'display: flex; flex-direction: column; gap: 6px;'
-    const keyLabel = document.createElement('label')
-    keyLabel.textContent = '按键'
-    keyLabel.style.cssText = 'font-size: 14px; color: #333;'
-    const keyInput = document.createElement('input')
-    keyInput.type = 'text'
-    keyInput.value = shortcutConfig.key
-    keyInput.maxLength = 1
-    keyInput.style.cssText = `
-      padding: 10px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      font-size: 16px;
-      text-align: center;
-      text-transform: uppercase;
-    `
-
-    const hint = document.createElement('p')
-    hint.textContent = '提示：请输入单个字母或数字键'
-    hint.style.cssText = 'font-size: 12px; color: #999; margin: 4px 0 0 0;'
-
-    keyDiv.appendChild(keyLabel)
-    keyDiv.appendChild(keyInput)
-    keyDiv.appendChild(hint)
-
-    container.appendChild(ctrlDiv)
-    container.appendChild(shiftDiv)
-    container.appendChild(altDiv)
-    container.appendChild(keyDiv)
-
-    // 按钮区域
-    const buttons = document.createElement('div')
-    buttons.style.cssText = 'display: flex; gap: 12px; margin-top: 20px;'
-
-    const cancelBtn = document.createElement('button')
-    cancelBtn.textContent = '取消'
-    cancelBtn.style.cssText = `
-      flex: 1;
-      padding: 10px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      background: #fff;
-      color: #666;
-      font-size: 14px;
-      cursor: pointer;
-    `
-    cancelBtn.addEventListener('click', () => document.body.removeChild(overlay))
-
-    const saveBtn = document.createElement('button')
-    saveBtn.textContent = '保存'
-    saveBtn.style.cssText = `
-      flex: 1;
-      padding: 10px;
-      border: none;
-      border-radius: 6px;
-      background: #007bff;
-      color: #fff;
-      font-size: 14px;
-      cursor: pointer;
-    `
-    saveBtn.addEventListener('click', () => {
-      const newKey = keyInput.value.toLowerCase()
-      if (!newKey.match(/^[a-zA-Z0-9]$/)) {
-        alert('请输入有效的按键（字母或数字）')
-        return
       }
-
-      shortcutConfig = {
-        key: newKey,
-        shiftKey: shiftCheckbox.checked,
-        ctrlKey: ctrlCheckbox.checked,
-        altKey: altCheckbox.checked,
-      }
-
-      GM_setValue('videoCapture_key', shortcutConfig.key)
-      GM_setValue('videoCapture_shiftKey', shortcutConfig.shiftKey)
-      GM_setValue('videoCapture_ctrlKey', shortcutConfig.ctrlKey)
-      GM_setValue('videoCapture_altKey', shortcutConfig.altKey)
-
-      alert(`快捷键已设置为: ${getShortcutText()}`)
-      document.body.removeChild(overlay)
     })
-
-    buttons.appendChild(cancelBtn)
-    buttons.appendChild(saveBtn)
-
-    dialog.appendChild(title)
-    dialog.appendChild(currentShortcut)
-    dialog.appendChild(container)
-    dialog.appendChild(buttons)
-    overlay.appendChild(dialog)
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) document.body.removeChild(overlay)
-    })
-
-    document.body.appendChild(overlay)
   }
 
-  /**
-   * 键盘事件处理函数
-   * 监听自定义快捷键触发截图
-   */
-  function handleKeyDown(event) {
-    if (isEditableTarget(event.target)) return
-    if (matchShortcut(event)) {
-      event.preventDefault()
-
-      const player = getCurrentPlayer()
-      if (player) {
-        capture(player)
-      } else if (isInIframe()) {
-        window.parent.postMessage({ type: 'VIDEO_CAPTURE_REQUEST' }, '*')
-      } else {
-        const iframes = document.querySelectorAll('iframe')
-        let found = false
-        iframes.forEach((iframe) => {
-          try {
-            const iframeWindow = iframe.contentWindow
-            if (iframeWindow) {
-              iframeWindow.postMessage({ type: 'VIDEO_CAPTURE' }, '*')
-              found = true
-            }
-          } catch (e) {}
-        })
-      }
-    }
-  }
-
-  /**
-   * 跨页面消息处理函数
-   * 处理来自iframe或父页面的截图请求
-   */
+  /* ============================================
+   * 9. Iframe 跨页面消息处理（如 main.user.js）
+   * ============================================ */
   function handleMessage(event) {
     if (event.data && event.data.type === 'VIDEO_CAPTURE') {
-      const player = getCurrentPlayer()
-      if (player) capture(player)
+      const video = findBestVideo()
+      if (video) videoCapturer.capture(video)
     } else if (event.data && event.data.type === 'VIDEO_CAPTURE_REQUEST') {
-      const player = getCurrentPlayer()
-      if (player) {
-        capture(player)
+      /* 本页有视频则截图，否则转发给子 iframe */
+      const video = findBestVideo()
+      if (video) {
+        videoCapturer.capture(video)
       } else {
-        // 继续向子iframe转发请求
         const iframes = document.querySelectorAll('iframe')
         iframes.forEach((iframe) => {
           try {
@@ -639,69 +544,317 @@
     }
   }
 
-  /**
-   * 鼠标悬停事件处理函数
-   * 追踪当前鼠标悬停的视频元素
-   */
-  function handleMouseOver(event) {
-    let target = event.target
-    while (target) {
-      if (isVideoElement(target)) {
-        activePlayerInstance = target
-        break
-      }
-      // 检查Shadow DOM中的视频
-      if (target.shadowRoot) {
-        const videoInShadow = target.shadowRoot.querySelector('video, bwp-video')
-        if (videoInShadow) {
-          activePlayerInstance = videoInShadow
-          break
+  /* ============================================
+   * 10. 快捷键监听
+   * ============================================ */
+  let keydownHandler = null
+
+  function parseShortcut(str) {
+    const parts = str.split('+').map((s) => s.trim())
+    const r = {
+      ctrl: false,
+      alt: false,
+      shift: false,
+      meta: false,
+      key: '',
+      keyCode: 0,
+    }
+    parts.forEach((p) => {
+      const lp = p.toLowerCase()
+      if (lp === 'ctrl' || lp === 'control') r.ctrl = true
+      else if (lp === 'alt') r.alt = true
+      else if (lp === 'shift') r.shift = true
+      else if (lp === 'meta' || lp === 'win' || lp === 'cmd') r.meta = true
+      else r.key = p
+    })
+    if (r.key) r.keyCode = KEY_MAP[r.key] || r.key.toUpperCase().charCodeAt(0)
+    return r
+  }
+
+  function matchShortcut(event) {
+    const p = parseShortcut(config.screenshotKey)
+    if (
+      event.ctrlKey !== p.ctrl ||
+      event.altKey !== p.alt ||
+      event.shiftKey !== p.shift ||
+      event.metaKey !== p.meta
+    )
+      return false
+    const ek = event.key.toUpperCase()
+    if (ek !== p.key.toUpperCase() && event.keyCode !== p.keyCode) return false
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return false
+    return true
+  }
+
+  function registerKeyHandler() {
+    if (keydownHandler) native.removeEventListener.call(document, 'keydown', keydownHandler, true)
+    keydownHandler = function (event) {
+      const t = event.target
+      if (
+        (t.getAttribute && t.getAttribute('contenteditable') === 'true') ||
+        /INPUT|TEXTAREA|SELECT/.test(t.nodeName)
+      )
+        return
+      if (matchShortcut(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        const video = findBestVideo()
+        if (!video) {
+          /* 当前页无视频，尝试通过 iframe 委托 */
+          if (isInIframe()) {
+            window.parent.postMessage({ type: 'VIDEO_CAPTURE_REQUEST' }, '*')
+          } else {
+            const iframes = document.querySelectorAll('iframe')
+            iframes.forEach((iframe) => {
+              try {
+                iframe.contentWindow.postMessage({ type: 'VIDEO_CAPTURE' }, '*')
+              } catch (e) {}
+            })
+          }
+          return
         }
+        console.log('[VS] 截图触发，快捷键:', config.screenshotKey)
+        videoCapturer.capture(video)
       }
-      target = target.parentNode
+    }
+    native.addEventListener.call(document, 'keydown', keydownHandler, true)
+  }
+
+  /* ============================================
+   * 11. 快捷键录制 UI（inline 浮层）
+   * ============================================ */
+  let recorderEl = null
+
+  function removeRecorder() {
+    if (recorderEl) {
+      recorderEl.remove()
+      recorderEl = null
     }
   }
 
-  /**
-   * 初始化函数
-   * 设置所有必要的劫持、监听器和事件处理
-   */
-  function init() {
-    // 注册油猴菜单命令
-    if (typeof GM_registerMenuCommand === 'function') {
-      GM_registerMenuCommand(`设置截图快捷键 (当前: ${getShortcutText()})`, showShortcutSettings)
+  function showKeyRecorder() {
+    removeRecorder()
+
+    const overlay = document.createElement('div')
+    overlay.id = '_vs_key_recorder'
+    overlay.innerHTML = `
+      <div class="_vs_modal">
+        <div class="_vs_modal-title">设置截图快捷键</div>
+        <div class="_vs_modal-hint">请按下你想要绑定的组合键</div>
+        <div class="_vs_modal-display">
+          <span class="_vs_key_placeholder">等待按键...</span>
+        </div>
+        <div class="_vs_modal-actions">
+          <button class="_vs_btn _vs_btn-cancel">取消</button>
+          <button class="_vs_btn _vs_btn-save _vs_disabled" disabled>保存</button>
+        </div>
+      </div>`
+
+    const STYLE_ID = '_vs_recorder_style'
+    if (!document.getElementById(STYLE_ID)) {
+      const style = document.createElement('style')
+      style.id = STYLE_ID
+      style.textContent = `
+        #_vs_key_recorder {
+          position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+          z-index: 2147483647; display: flex; align-items: center; justify-content: center;
+          background: rgba(0,0,0,0.45); backdrop-filter: blur(4px);
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        ._vs_modal {
+          background: #fff; border-radius: 16px; padding: 28px 36px 24px;
+          min-width: 340px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          text-align: center; animation: _vs_fadeIn 0.2s ease;
+        }
+        @keyframes _vs_fadeIn { from { opacity:0; transform:scale(0.95) } to { opacity:1; transform:scale(1) } }
+        ._vs_modal-title { font-size: 17px; font-weight: 600; color: #1d1d1f; margin-bottom: 8px; }
+        ._vs_modal-hint { font-size: 13px; color: #86868b; margin-bottom: 20px; }
+        ._vs_modal-display {
+          margin: 0 auto 20px; padding: 16px; border-radius: 12px;
+          background: #f5f5f7; min-height: 48px; display: flex; align-items: center; justify-content: center;
+          transition: background 0.15s;
+        }
+        ._vs_modal-display._vs_active { background: #e8f0fe; }
+        ._vs_key_placeholder { font-size: 22px; font-weight: 500; color: #999; letter-spacing: 0.5px; }
+        ._vs_key_placeholder._vs_recorded { color: #1d1d1f; }
+        ._vs_modal-actions { display: flex; gap: 12px; justify-content: center; }
+        ._vs_btn {
+          padding: 8px 24px; border-radius: 20px; border: none; font-size: 14px;
+          font-weight: 500; cursor: pointer; transition: all 0.15s; outline: none;
+        }
+        ._vs_btn-cancel { background: #f5f5f7; color: #515154; }
+        ._vs_btn-cancel:hover { background: #e8e8ed; }
+        ._vs_btn-save { background: #0071e3; color: #fff; }
+        ._vs_btn-save:hover:not(._vs_disabled) { background: #0077ed; }
+        ._vs_btn-save._vs_disabled { opacity: 0.4; cursor: not-allowed; }`
+      document.head.appendChild(style)
     }
 
-    // 劫持attachShadow以支持Shadow DOM
-    hackAttachShadow()
-    // 劫持视频元素的属性设置方法
+    document.body.appendChild(overlay)
+    recorderEl = overlay
+
+    const placeholder = overlay.querySelector('._vs_key_placeholder')
+    const display = overlay.querySelector('._vs_modal-display')
+    const saveBtn = overlay.querySelector('._vs_btn-save')
+    const cancelBtn = overlay.querySelector('._vs_btn-cancel')
+
+    let recordedKey = ''
+    let ignoreNextUp = false
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        removeRecorder()
+        return
+      }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault()
+        return
+      }
+
+      ignoreNextUp = true
+
+      const parts = []
+      if (e.ctrlKey) parts.push('Ctrl')
+      if (e.altKey) parts.push('Alt')
+      if (e.shiftKey) parts.push('Shift')
+      if (e.metaKey) parts.push('Meta')
+
+      const key = e.key
+      if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
+        parts.push(key.length === 1 ? key.toUpperCase() : key)
+      }
+
+      recordedKey = parts.join('+')
+      if (recordedKey) {
+        placeholder.textContent = recordedKey
+        placeholder.className = '_vs_key_placeholder _vs_recorded'
+        display.classList.add('_vs_active')
+        saveBtn.disabled = false
+        saveBtn.classList.remove('_vs_disabled')
+      }
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    const onKeyUp = (e) => {
+      if (ignoreNextUp) {
+        e.preventDefault()
+        e.stopPropagation()
+        ignoreNextUp = false
+        return
+      }
+      if (e.key === 'Escape') {
+        removeRecorder()
+        return
+      }
+    }
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) removeRecorder()
+    })
+    cancelBtn.addEventListener('click', removeRecorder)
+    saveBtn.addEventListener('click', () => {
+      if (!recordedKey) return
+      config.screenshotKey = recordedKey
+      saveConfig(config)
+      registerKeyHandler()
+      rebuildMenu()
+      removeRecorder()
+      console.log('[VS] 快捷键已更新为:', recordedKey)
+    })
+
+    document.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('keyup', onKeyUp, true)
+
+    const cleanup = () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+      document.removeEventListener('keyup', onKeyUp, true)
+    }
+    const removalObs = new MutationObserver(() => {
+      if (!document.getElementById('_vs_key_recorder')) {
+        cleanup()
+        removalObs.disconnect()
+      }
+    })
+    removalObs.observe(document.body, { childList: true })
+  }
+
+  /* ============================================
+   * 12. 油猴菜单
+   * ============================================ */
+  let menuIds = []
+
+  function clearMenu() {
+    menuIds.forEach((id) => {
+      try {
+        GM_unregisterMenuCommand(id)
+      } catch (e) {}
+    })
+    menuIds = []
+  }
+
+  function rebuildMenu() {
+    clearMenu()
+    registerMenu()
+  }
+
+  function registerMenu() {
+    const items = [
+      {
+        title: `[截图] 修改快捷键 (当前: ${config.screenshotKey})`,
+        fn: showKeyRecorder,
+      },
+    ]
+    items.forEach((item) => {
+      try {
+        const id = GM_registerMenuCommand(item.title, item.fn)
+        menuIds.push(id)
+      } catch (e) {
+        console.warn('[VS] 注册菜单失败:', item.title)
+      }
+    })
+  }
+
+  /* ============================================
+   * 13. 初始化
+   * ============================================ */
+  function init() {
+    console.log('[VS] 视频截图工具 v1.2.0 已加载')
+
+    /* === 原型劫持（尽早执行，确保新创建的 video 自动带上 crossorigin） === */
     hijackVideoSetAttribute()
     hijackVideoSrcProperty()
 
-    // 监听常规DOM中的视频元素
-    supportMediaTags.forEach((tagName) => {
-      ready(tagName, function (element) {
-        if (element.tagName.toLowerCase() === 'bwp-video') {
-          element.HTMLVideoElement = true
-        }
-        setVideoCors(element)
-      })
-    })
+    /* === Shadow DOM 破解 === */
+    hackAttachShadow()
 
-    // 监听Shadow DOM创建事件
-    document.addEventListener('addShadowRoot', function (e) {
-      const shadowRoot = e.detail.shadowRoot
-      if (shadowRoot && !shadowDomList.includes(shadowRoot)) {
-        shadowDomList.push(shadowRoot)
-      }
-    })
+    /* === 扫描已有视频 === */
+    scanVideoElements()
 
-    // 添加全局事件监听器
-    document.addEventListener('keydown', handleKeyDown, true)
-    window.addEventListener('message', handleMessage, false)
+    /* === DOM 变化监听（新视频出现时自动设置 CORS） === */
+    initDOMObserver()
+
+    /* === 鼠标悬停追踪 === */
     document.addEventListener('mouseover', handleMouseOver, true)
+
+    /* === Iframe 跨域消息 === */
+    window.addEventListener('message', handleMessage, false)
+
+    /* === 快捷键 === */
+    registerKeyHandler()
+
+    /* === 油猴菜单 === */
+    registerMenu()
   }
 
-  // 启动脚本
-  init()
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init)
+  } else {
+    init()
+  }
+
+  window.addEventListener('beforeunload', () => {
+    if (keydownHandler) document.removeEventListener('keydown', keydownHandler, true)
+    clearMenu()
+  })
 })()
