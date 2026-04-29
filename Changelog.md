@@ -1,5 +1,13 @@
 # Changelog
 
+## 202604292302
+
+- 引入 `shadowHostMap`（WeakMap），实现 host→shadowRoot O(1) 反向查找，替代遍历搜索。
+- 重构 `handleMouseOver` 为三层悬停策略：parentNode 快速路径 + `_vsVideo` 缓存命中 → composedPath 正向直击视频 → composedPath 反向 host 查找跨越 closed shadow 边界。
+- 为每个 shadowRoot 缓存首视频引用到 `_vsVideo`，hover 时优先使用缓存（免 `querySelector`），同时以 `isConnected` 校验避免 SPA 场景下引用失效。
+- `scanVideoElements` 清理已断开 shadowRoot 时同步删除 `shadowHostMap` 条目。
+- `hackAttachShadow` 和 `addShadowRoot` 事件处理器同步注册 WeakMap 映射 + 缓存 `_vsVideo`。
+
 ## 202604292252
 
 - 引入 `SUPPORTED_VIDEO_TAGS` 和 `SUPPORTED_SELECTOR` 常量，集中管理视频标签，便于扩展更多第三方视频标签。

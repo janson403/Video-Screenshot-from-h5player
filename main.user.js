@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202604292252
+// @version      202604292315
 // @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -371,27 +371,69 @@
   /* ============================================
    * 7. 视频元素查找 & DOM 监听
    * ============================================ */
-  let activeVideo = null
+  const shadowHostMap = new WeakMap()
   let shadowDomList = []
   let vsHackShadow = false
+  let activeVideo = null
 
-  /* 鼠标悬停追踪当前活动的视频（如 main.user.js） */
+  /* 鼠标悬停追踪当前活动的视频（三层策略：parentNode → composedPath 正向 → composedPath 反向） */
   function handleMouseOver(event) {
+    /* Layer 1: parentNode 快速路径 — 常规 DOM + open shadow 缓存命中 */
     let target = event.target
     while (target) {
       if (isVideoElement(target)) {
         activeVideo = target
-        break
+        return
       }
-      /* 检查 Shadow DOM 中的视频 */
       if (target.shadowRoot) {
+        const cached = target.shadowRoot._vsVideo
+        if (cached && cached.isConnected && isVideoElement(cached)) {
+          activeVideo = cached
+          return
+        }
         const videoInShadow = target.shadowRoot.querySelector(SUPPORTED_SELECTOR)
         if (videoInShadow) {
           activeVideo = videoInShadow
-          break
+          return
         }
       }
       target = target.parentNode
+    }
+
+    /* Layer 2: composedPath 正向遍历 — 直接命中事件路径中的视频（含 closed shadow 内部） */
+    const path = event.composedPath()
+    for (let i = 0; i < path.length; i++) {
+      if (isVideoElement(path[i])) {
+        activeVideo = path[i]
+        return
+      }
+    }
+
+    /* Layer 3: composedPath 反向遍历 — 通过 host 缓存查找 closed shadow 中的视频 */
+    for (let i = path.length - 1; i >= 0; i--) {
+      const el = path[i]
+      if (el instanceof ShadowRoot) {
+        const cached = el._vsVideo
+        if (cached && cached.isConnected && isVideoElement(cached)) {
+          activeVideo = cached
+          return
+        }
+      }
+      if (el.nodeType === 1) {
+        const sr = shadowHostMap.get(el)
+        if (sr) {
+          const cached = sr._vsVideo
+          if (cached && cached.isConnected && isVideoElement(cached)) {
+            activeVideo = cached
+            return
+          }
+          const videoInShadow = sr.querySelector(SUPPORTED_SELECTOR)
+          if (videoInShadow) {
+            activeVideo = videoInShadow
+            return
+          }
+        }
+      }
     }
   }
 
@@ -409,7 +451,9 @@
     const shadowVideos = []
     shadowDomList.forEach((sr) => {
       try {
-        sr.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => shadowVideos.push(v))
+        const videos = sr.querySelectorAll(SUPPORTED_SELECTOR)
+        sr._vsVideo = videos.length > 0 ? videos[0] : null
+        videos.forEach((v) => shadowVideos.push(v))
       } catch (e) {}
     })
     const candidates = [...allVideos, ...shadowVideos]
@@ -451,19 +495,25 @@
   }
 
   function scanVideoElements() {
-    /* 清理已销毁的 Shadow DOM 列表 */
+    /* 清理已销毁的 Shadow DOM，同步清理 WeakMap */
     shadowDomList = shadowDomList.filter(function (sr) {
-      return sr && sr.isConnected
+      if (!sr || !sr.isConnected) {
+        if (sr && sr.host) shadowHostMap.delete(sr.host)
+        return false
+      }
+      return true
     })
     /* 扫描常规 DOM 中的视频 */
     document.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
       if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
       setupVideoWithCorsRecovery(v)
     })
-    /* 扫描 Shadow DOM 中的视频 */
+    /* 扫描 Shadow DOM 中的视频并缓存 _vsVideo */
     shadowDomList.forEach((sr) => {
       try {
-        sr.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
+        const videos = sr.querySelectorAll(SUPPORTED_SELECTOR)
+        sr._vsVideo = videos.length > 0 ? videos[0] : null
+        videos.forEach((v) => {
           if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
           setupVideoWithCorsRecovery(v)
         })
@@ -486,7 +536,10 @@
         if (arg[0] && arg[0].mode) arg[0].mode = 'open'
 
         const shadowRoot = this._attachShadow.apply(this, arg)
-        if (!shadowDomList.includes(shadowRoot)) shadowDomList.push(shadowRoot)
+        if (!shadowDomList.includes(shadowRoot)) {
+          shadowDomList.push(shadowRoot)
+          shadowHostMap.set(this, shadowRoot)
+        }
 
         /* 如果原是 closed 模式，伪装 shadowRoot 为 null 避免破坏站点行为 */
         if (isClosed) {
@@ -499,9 +552,11 @@
           })
         }
 
-        /* 在新创建的 Shadow DOM 中扫描视频 */
+        /* 在新创建的 Shadow DOM 中扫描视频并缓存 _vsVideo */
         try {
-          shadowRoot.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
+          const videos = shadowRoot.querySelectorAll(SUPPORTED_SELECTOR)
+          shadowRoot._vsVideo = videos.length > 0 ? videos[0] : null
+          videos.forEach((v) => {
             if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
             setupVideoWithCorsRecovery(v)
           })
@@ -522,9 +577,14 @@
     document.addEventListener('addShadowRoot', (e) => {
       if (e.detail && e.detail.shadowRoot) {
         const sr = e.detail.shadowRoot
-        if (!shadowDomList.includes(sr)) shadowDomList.push(sr)
+        if (!shadowDomList.includes(sr)) {
+          shadowDomList.push(sr)
+          if (sr.host) shadowHostMap.set(sr.host, sr)
+        }
         try {
-          sr.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
+          const videos = sr.querySelectorAll(SUPPORTED_SELECTOR)
+          sr._vsVideo = videos.length > 0 ? videos[0] : null
+          videos.forEach((v) => {
             if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
             setupVideoWithCorsRecovery(v)
           })
