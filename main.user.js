@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202604300205
+// @version      202604301543
 // @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -194,8 +194,8 @@
       video.setAttribute('crossorigin', 'anonymous')
     }
 
-    /* 如果视频已加载，强制重载以应用CORS设置 */
-    if (video.src && video.readyState > 0) {
+    /* 如果视频已加载，强制重载以应用CORS设置（跳过 blob URL，避免破坏 MSE 播放器） */
+    if (video.src && !video.src.startsWith('blob:') && video.readyState > 0) {
       const originalSrc = video.src
       const currentTime = video.currentTime
       const paused = video.paused
@@ -215,7 +215,6 @@
     /* 错误恢复：CORS加载失败时自动移除属性并重试 */
     video.addEventListener('error', function onCorsError() {
       if (!video.hasAttribute('crossorigin')) return
-      if (video._corsRecovering) return
 
       const mediaError = video.error
       /* MEDIA_ERR_SRC_NOT_SUPPORTED(4) 或 MEDIA_ERR_NETWORK(2) 可能是 CORS 导致 */
@@ -226,19 +225,27 @@
       ) {
         console.warn('[VS] 视频因CORS限制加载失败，自动移除crossorigin重试')
 
-        video._corsRecovering = true
         const paused = video.paused
         const currentTime = video.currentTime
         const src = video.currentSrc || video.src
 
+        /* 跳过 blob URL，避免破坏 MSE 播放器内部状态 */
+        if (src && src.startsWith('blob:')) return
+
+        /* 绕过劫持，用原生 setter 设置 src，确保不自动重新添加 crossorigin */
+        const nativeSet = native.srcDescriptor && native.srcDescriptor.set
+        if (!nativeSet) return
+
         video.removeAttribute('crossorigin')
 
-        video.src = ''
+        /* video.src = '' 走原生 setter */
+        nativeSet.call(video, '')
         video.load()
 
         setTimeout(() => {
           if (!src) return
-          video.src = src
+          /* video.src = src 也走原生 setter，否则劫持会重新添加 crossorigin */
+          nativeSet.call(video, src)
           if (!paused) video.play().catch(() => {})
 
           seekToTimeAfterLoad(video, currentTime)
