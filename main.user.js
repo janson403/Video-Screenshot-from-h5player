@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202604301543
-// @description  按下自定义快捷键进行视频截图，支持shadow dom和iframe跨域
+// @version      202604301545
+// @description  Press custom hotkey to take video screenshots, supports shadow DOM and cross-origin iframes
 // @author       Pingyi ZHENG
 // @match        *://*/*
 // @grant        unsafeWindow
@@ -21,7 +21,7 @@
   'use strict'
 
   /* ============================================
-   * 1. 保存原生函数（必须在任何劫持前保存）
+   * 1. Save native functions (before any hijacking)
    * ============================================ */
   const native = {
     Object: { defineProperty: Object.defineProperty },
@@ -31,7 +31,7 @@
   }
 
   /* ============================================
-   * 2. 配置管理
+   * 2. Configuration
    * ============================================ */
   const CONFIG_KEY = 'vs_screenshot_config'
   const defaultConfig = {
@@ -110,7 +110,7 @@
         return Object.assign({}, defaultConfig, saved)
       }
     } catch (e) {
-      console.warn('[VS] 加载配置失败，使用默认配置')
+      console.warn('[VS] Failed to load config, using defaults')
     }
     return Object.assign({}, defaultConfig)
   }
@@ -119,14 +119,14 @@
     try {
       GM_setValue(CONFIG_KEY, conf)
     } catch (e) {
-      console.warn('[VS] 保存配置失败')
+      console.warn('[VS] Failed to save config')
     }
   }
 
   let config = loadConfig()
 
   /* ============================================
-   * 3. 工具函数
+   * 3. Utility Functions
    * ============================================ */
   function isInIframe() {
     return window.self !== window.top
@@ -155,17 +155,17 @@
   }
 
   /* ============================================
-   * 4. CORS 激进策略 + 错误自动恢复
+   * 4. Aggressive CORS Strategy + Auto Recovery
    * ============================================ */
 
   /**
-   * 设置视频 CORS + reload（激进策略，如 main.user.js）
-   * 对已加载视频强制 reload 以确保 crossoverigin 生效
-   * 附加 error 事件监听：若因 CORS 加载失败，自动移除 crossorigin 并重试
+   * Setup video CORS + reload (aggressive strategy)
+   * Force reload already-loaded videos to ensure crossorigin takes effect
+   * Attach error event listener: if CORS causes load failure, remove crossorigin and retry
    */
   /**
-   * 等元数据就绪再恢复进度，比直接赋 currentTime 更稳定
-   * 提取为公共函数，避免代码重复
+   * Wait for metadata to be ready before seeking, more stable than directly assigning currentTime
+   * Extracted as a shared utility to avoid code duplication
    */
   function seekToTimeAfterLoad(video, currentTime) {
     let seekDone = false
@@ -181,7 +181,7 @@
     video.addEventListener('loadedmetadata', seekToTime)
     video.addEventListener('canplay', seekToTime)
 
-    /* 兜底：3秒后仍未触发则强试 */
+    /* Fallback: force seek after 3 seconds if neither event fired */
     setTimeout(seekToTime, 3000)
   }
 
@@ -189,12 +189,12 @@
     if (video._corsSetupDone) return
     video._corsSetupDone = true
 
-    /* 首次设置 crossorigin */
+    /* First-time crossorigin setup */
     if (!video.hasAttribute('crossorigin')) {
       video.setAttribute('crossorigin', 'anonymous')
     }
 
-    /* 如果视频已加载，强制重载以应用CORS设置（跳过 blob URL，避免破坏 MSE 播放器） */
+    /* If video is already loaded, force reload to apply CORS (skip blob URLs to avoid breaking MSE players) */
     if (video.src && !video.src.startsWith('blob:') && video.readyState > 0) {
       const originalSrc = video.src
       const currentTime = video.currentTime
@@ -212,39 +212,39 @@
       }, 0)
     }
 
-    /* 错误恢复：CORS加载失败时自动移除属性并重试 */
+    /* Error recovery: auto-remove crossorigin attribute and retry on CORS failure */
     video.addEventListener('error', function onCorsError() {
       if (!video.hasAttribute('crossorigin')) return
 
       const mediaError = video.error
-      /* MEDIA_ERR_SRC_NOT_SUPPORTED(4) 或 MEDIA_ERR_NETWORK(2) 可能是 CORS 导致 */
+      /* MEDIA_ERR_SRC_NOT_SUPPORTED(4) or MEDIA_ERR_NETWORK(2) may be caused by CORS */
       if (
         mediaError &&
         (mediaError.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ||
           mediaError.code === MediaError.MEDIA_ERR_NETWORK)
       ) {
-        console.warn('[VS] 视频因CORS限制加载失败，自动移除crossorigin重试')
+        console.warn('[VS] Video failed to load due to CORS, removing crossorigin and retrying')
 
         const paused = video.paused
         const currentTime = video.currentTime
         const src = video.currentSrc || video.src
 
-        /* 跳过 blob URL，避免破坏 MSE 播放器内部状态 */
+        /* Skip blob URLs to avoid breaking MSE player internal state */
         if (src && src.startsWith('blob:')) return
 
-        /* 绕过劫持，用原生 setter 设置 src，确保不自动重新添加 crossorigin */
+        /* Bypass hijacking, use native setter to set src, prevent auto re-adding crossorigin */
         const nativeSet = native.srcDescriptor && native.srcDescriptor.set
         if (!nativeSet) return
 
         video.removeAttribute('crossorigin')
 
-        /* video.src = '' 走原生 setter */
+        /* video.src = '' via native setter */
         nativeSet.call(video, '')
         video.load()
 
         setTimeout(() => {
           if (!src) return
-          /* video.src = src 也走原生 setter，否则劫持会重新添加 crossorigin */
+          /* video.src = src via native setter as well, otherwise hijack would re-add crossorigin */
           nativeSet.call(video, src)
           if (!paused) video.play().catch(() => {})
 
@@ -253,19 +253,19 @@
       }
     })
 
-    /* playing 事件追踪：无悬停时设为当前目标，不覆盖鼠标悬停优先 */
+    /* playing event tracking: set as active video when none is hovered, do not override hover priority */
     video.addEventListener('playing', function onPlaying() {
       if (!activeVideo) activeVideo = video
     })
   }
 
   /* ============================================
-   * 5. 原型劫持（自动为视频添加 crossorigin）
+   * 5. Prototype Hijacking (auto-add crossorigin to videos)
    * ============================================ */
 
   /**
-   * 劫持 HTMLVideoElement.prototype.setAttribute
-   * 当设置 src 时自动插入 crossorigin
+   * Hijack HTMLVideoElement.prototype.setAttribute
+   * Automatically insert crossorigin when setting src
    */
   function hijackVideoSetAttribute() {
     const originalSetAttribute = HTMLVideoElement.prototype.setAttribute
@@ -278,8 +278,8 @@
   }
 
   /**
-   * 劫持 HTMLMediaElement.prototype.src 属性 setter
-   * 通过 video.src = '...' 赋值时自动插入 crossorigin
+   * Hijack HTMLMediaElement.prototype.src property setter
+   * Automatically insert crossorigin when assigning video.src = '...'
    */
   function hijackVideoSrcProperty() {
     const descriptor = native.srcDescriptor
@@ -302,16 +302,16 @@
   }
 
   /* ============================================
-   * 6. 截图核心
+   * 6. Core Screenshot
    * ============================================ */
   const videoCapturer = {
     capture(video) {
       if (!video || !isVideoElement(video)) {
-        console.warn('[VS] 无效的视频元素')
+        console.warn('[VS] Invalid video element')
         return false
       }
       if (!video.videoWidth || !video.videoHeight) {
-        console.warn('[VS] 视频尚未加载出画面')
+        console.warn('[VS] Video has not loaded any frames yet')
         return false
       }
 
@@ -320,8 +320,8 @@
 
       const title = `${document.title.replace(/[<>:"/\\|?*]/g, '_')}_${ts}`
 
-      /* CORS 已在原型劫持和 setupVideoWithCorsRecovery 中提前设置，
-         此处不再重复设置（但保留兜底以防边缘情况） */
+      /* CORS is already set by prototype hijacking and setupVideoWithCorsRecovery,
+         skip re-setting here (keep fallback just in case) */
       if (!video.hasAttribute('crossorigin')) {
         try {
           video.setAttribute('crossorigin', 'anonymous')
@@ -333,18 +333,18 @@
       canvas.height = video.videoHeight
       const ctx = canvas.getContext('2d')
       if (!ctx) {
-        console.warn('[VS] 无法获取 canvas 上下文')
+        console.warn('[VS] Cannot get canvas context')
         return false
       }
 
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       } catch (e) {
-        console.warn('[VS] drawImage 失败（CORS?）', e)
+        console.warn('[VS] drawImage failed (CORS?)', e)
         return false
       }
 
-      console.log('[VS] 截图成功', { title, w: canvas.width, h: canvas.height })
+      console.log('[VS] Screenshot captured', { title, w: canvas.width, h: canvas.height })
 
       this.preview(canvas, title)
       return true
@@ -355,22 +355,23 @@
       const previewPage = window.open('', '_blank')
       previewPage.document.title = `capture preview - ${title || 'Untitled'}`
       previewPage.document.body.style.textAlign = 'center'
+      previewPage.document.body.style.backgroundColor = 'black'
       previewPage.document.body.style.margin = '0'
       previewPage.document.body.appendChild(canvas)
     },
   }
 
   /* ============================================
-   * 7. 视频元素查找 & DOM 监听
+   * 7. Video Element Detection & DOM Monitoring
    * ============================================ */
   const shadowHostMap = new WeakMap()
   let shadowDomList = []
   let vsHackShadow = false
   let activeVideo = null
 
-  /* 鼠标悬停追踪当前活动的视频（三层策略：parentNode → composedPath 正向 → composedPath 反向） */
+  /* Mouse hover tracking for active video (3-layer strategy: parentNode → composedPath forward → composedPath reverse) */
   function handleMouseOver(event) {
-    /* Layer 1: parentNode 快速路径 — 常规 DOM + open shadow 缓存命中 */
+    /* Layer 1: parentNode fast path — regular DOM + open shadow cache hit */
     let target = event.target
     while (target) {
       if (isVideoElement(target)) {
@@ -392,7 +393,7 @@
       target = target.parentNode
     }
 
-    /* Layer 2: composedPath 正向遍历 — 直接命中事件路径中的视频（含 closed shadow 内部） */
+    /* Layer 2: composedPath forward traversal — match video in event path directly (including closed shadow) */
     const path = event.composedPath()
     for (let i = 0; i < path.length; i++) {
       if (isVideoElement(path[i])) {
@@ -401,7 +402,7 @@
       }
     }
 
-    /* Layer 3: composedPath 反向遍历 — 通过 host 缓存查找 closed shadow 中的视频 */
+    /* Layer 3: composedPath reverse traversal — lookup closed shadow video via host cache */
     for (let i = path.length - 1; i >= 0; i--) {
       const el = path[i]
       if (el instanceof ShadowRoot) {
@@ -428,12 +429,12 @@
       }
     }
 
-    /* 鼠标不在任何视频上，清除悬停标记 */
+    /* Mouse not hovering any video, clear active video */
     activeVideo = null
   }
 
   function findBestVideo() {
-    /* 优先使用鼠标悬停追踪的视频 */
+    /* Prefer the mouse-hover-tracked video */
     if (activeVideo && isVideoElement(activeVideo)) {
       try {
         if (activeVideo.isConnected) {
@@ -478,9 +479,9 @@
       try {
         const r = v.getBoundingClientRect()
         let score = r.width * r.height
-        /* 正在播放的视频获得额外权重 */
+        /* Playing videos get extra weight */
         if (!v.paused && v.readyState > 2) score *= 2
-        /* 鼠标悬停的视频优先级最高，无视面积 */
+        /* Hovered video has highest priority, ignore area */
         if (v === activeVideo) score = Infinity
         if (score > bestScore) {
           bestScore = score
@@ -492,7 +493,7 @@
   }
 
   function scanVideoElements() {
-    /* 清理已销毁的 Shadow DOM，同步清理 WeakMap */
+    /* Clean up destroyed Shadow DOMs, also clean WeakMap */
     shadowDomList = shadowDomList.filter(function (sr) {
       if (!sr || !sr.isConnected) {
         if (sr && sr.host) shadowHostMap.delete(sr.host)
@@ -500,12 +501,12 @@
       }
       return true
     })
-    /* 扫描常规 DOM 中的视频 */
+    /* Scan regular DOM for videos */
     document.querySelectorAll(SUPPORTED_SELECTOR).forEach((v) => {
       if (v.tagName.toLowerCase() !== 'video') v.HTMLVideoElement = true
       setupVideoWithCorsRecovery(v)
     })
-    /* 扫描 Shadow DOM 中的视频并缓存 _vsVideo */
+    /* Scan Shadow DOM for videos and cache _vsVideo */
     shadowDomList.forEach((sr) => {
       try {
         const videos = sr.querySelectorAll(SUPPORTED_SELECTOR)
@@ -519,7 +520,7 @@
   }
 
   /* ============================================
-   * 8. Shadow DOM 破解
+   * 8. Shadow DOM Bypass
    * ============================================ */
   function hackAttachShadow() {
     if (vsHackShadow) return
@@ -529,7 +530,7 @@
         const arg = arguments
         const isClosed = arg[0] && arg[0].mode === 'closed'
 
-        /* 改为 open 以便访问内部 video */
+        /* Change mode to open to access internal video */
         if (arg[0] && arg[0].mode) arg[0].mode = 'open'
 
         const shadowRoot = this._attachShadow.apply(this, arg)
@@ -538,7 +539,7 @@
           shadowHostMap.set(this, shadowRoot)
         }
 
-        /* 如果原是 closed 模式，伪装 shadowRoot 为 null 避免破坏站点行为 */
+        /* If originally closed mode, fake shadowRoot as null to avoid breaking site behavior */
         if (isClosed) {
           native.Object.defineProperty(this, 'shadowRoot', {
             configurable: true,
@@ -549,7 +550,7 @@
           })
         }
 
-        /* 在新创建的 Shadow DOM 中扫描视频并缓存 _vsVideo */
+        /* Scan newly created Shadow DOM for videos and cache _vsVideo */
         try {
           const videos = shadowRoot.querySelectorAll(SUPPORTED_SELECTOR)
           shadowRoot._vsVideo = videos.length > 0 ? videos[0] : null
@@ -563,7 +564,7 @@
       }
       vsHackShadow = true
     } catch (e) {
-      console.warn('[VS] Shadow DOM 破解失败')
+      console.warn('[VS] Shadow DOM bypass failed')
     }
   }
 
@@ -591,14 +592,14 @@
   }
 
   /* ============================================
-   * 9. Iframe 跨页面消息处理（如 main.user.js）
+   * 9. Cross-page Iframe Message Handling
    * ============================================ */
   function handleMessage(event) {
     if (event.data && event.data.type === 'VIDEO_CAPTURE') {
       const video = findBestVideo()
       if (video) videoCapturer.capture(video)
     } else if (event.data && event.data.type === 'VIDEO_CAPTURE_REQUEST') {
-      /* 本页有视频则截图，否则转发给子 iframe */
+      /* Capture on this page if video exists, otherwise forward to child iframes */
       const video = findBestVideo()
       if (video) {
         videoCapturer.capture(video)
@@ -614,7 +615,7 @@
   }
 
   /* ============================================
-   * 10. 快捷键监听
+   * 10. Hotkey Listener
    * ============================================ */
   let keydownHandler = null
 
@@ -669,7 +670,7 @@
         event.stopPropagation()
         const video = findBestVideo()
         if (!video) {
-          /* 当前页无视频，尝试通过 iframe 委托 */
+          /* No video on current page, try delegating via iframes */
           if (isInIframe()) {
             window.parent.postMessage({ type: 'VIDEO_CAPTURE_REQUEST' }, '*')
           } else {
@@ -682,7 +683,7 @@
           }
           return
         }
-        console.log('[VS] 截图触发，快捷键:', config.screenshotKey)
+        console.log('[VS] Screenshot triggered, hotkey:', config.screenshotKey)
         videoCapturer.capture(video)
       }
     }
@@ -690,7 +691,7 @@
   }
 
   /* ============================================
-   * 11. 快捷键录制 UI（inline 浮层）
+   * 11. Hotkey Recorder UI (inline overlay)
    * ============================================ */
   let recorderEl = null
 
@@ -708,14 +709,14 @@
     overlay.id = '_vs_key_recorder'
     overlay.innerHTML = `
       <div class="_vs_modal">
-        <div class="_vs_modal-title">设置截图快捷键</div>
-        <div class="_vs_modal-hint">请按下你想要绑定的组合键</div>
+        <div class="_vs_modal-title">Set Screenshot Hotkey</div>
+        <div class="_vs_modal-hint">Press the key combination you want to bind</div>
         <div class="_vs_modal-display">
-          <span class="_vs_key_placeholder">等待按键...</span>
+          <span class="_vs_key_placeholder">Waiting for key...</span>
         </div>
         <div class="_vs_modal-actions">
-          <button class="_vs_btn _vs_btn-cancel">取消</button>
-          <button class="_vs_btn _vs_btn-save _vs_disabled" disabled>保存</button>
+          <button class="_vs_btn _vs_btn-cancel">Cancel</button>
+          <button class="_vs_btn _vs_btn-save _vs_disabled" disabled>Save</button>
         </div>
       </div>`
 
@@ -829,7 +830,7 @@
       registerKeyHandler()
       rebuildMenu()
       removeRecorder()
-      console.log('[VS] 快捷键已更新为:', recordedKey)
+      console.log('[VS] Hotkey updated to:', recordedKey)
     })
 
     document.addEventListener('keydown', onKeyDown, true)
@@ -849,7 +850,7 @@
   }
 
   /* ============================================
-   * 12. 油猴菜单
+   * 12. Tampermonkey Menu
    * ============================================ */
   let menuIds = []
 
@@ -870,8 +871,13 @@
   function registerMenu() {
     const items = [
       {
-        title: `[截图] 修改快捷键 (当前: ${config.screenshotKey})`,
+        title: `Change hotkey (current: ${config.screenshotKey})`,
         fn: showKeyRecorder,
+      },
+      {
+        title:
+          'If pressing the shortcut does not produce any results, open the Developer Tools by pressing F12 to check the Console tab for errors or messages.',
+        fn: () => {},
       },
     ]
     items.forEach((item) => {
@@ -879,40 +885,40 @@
         const id = GM_registerMenuCommand(item.title, item.fn)
         menuIds.push(id)
       } catch (e) {
-        console.warn('[VS] 注册菜单失败:', item.title)
+        console.warn('[VS] Menu registration failed:', item.title)
       }
     })
   }
 
   /* ============================================
-   * 13. 初始化
+   * 13. Initialization
    * ============================================ */
   function init() {
-    console.log('[VS] 视频截图工具 v1.2.0 已加载')
+    console.log('[VS] Video screenshot tool loaded')
 
-    /* === 原型劫持（尽早执行，确保新创建的 video 自动带上 crossorigin） === */
+    /* === Prototype hijacking (execute early to auto-add crossorigin to new videos) === */
     hijackVideoSetAttribute()
     hijackVideoSrcProperty()
 
-    /* === Shadow DOM 破解 === */
+    /* === Shadow DOM bypass === */
     hackAttachShadow()
 
-    /* === 扫描已有视频 === */
+    /* === Scan existing videos === */
     scanVideoElements()
 
-    /* === DOM 变化监听（新视频出现时自动设置 CORS） === */
+    /* === DOM mutation observer (auto-setup CORS when new videos appear) === */
     initDOMObserver()
 
-    /* === 鼠标悬停追踪 === */
+    /* === Mouse hover tracking === */
     document.addEventListener('mouseover', handleMouseOver, true)
 
-    /* === Iframe 跨域消息 === */
+    /* === Cross-origin iframe messages === */
     window.addEventListener('message', handleMessage, false)
 
-    /* === 快捷键 === */
+    /* === Hotkey === */
     registerKeyHandler()
 
-    /* === 油猴菜单 === */
+    /* === Tampermonkey menu === */
     registerMenu()
   }
 
