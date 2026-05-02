@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202605030220
+// @version      202605030230
 // @description  Press custom hotkey to take video screenshots, supports shadow DOM and cross-origin iframes
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -792,6 +792,7 @@
    * 12. Tampermonkey Menu
    * ============================================ */
   let menuIds = []
+  let menuRegistered = false
 
   function clearMenu() {
     menuIds.forEach((id) => {
@@ -804,10 +805,15 @@
 
   function rebuildMenu() {
     clearMenu()
+    menuRegistered = false
     registerMenu()
   }
 
   function registerMenu() {
+    /* Guard: only register in the top-level document, not in iframes */
+    if (menuRegistered) return
+    menuRegistered = true
+
     const items = [
       {
         title: `Change hotkey (current: ${config.screenshotKey})`,
@@ -815,11 +821,12 @@
       },
       {
         title: 'How to use',
-        fn: alert(
-          'Press the shortcut to take a screenshot. If pressing the shortcut does not produce any results:\n' +
-            '1. The browser may have blocked the popup window — check the address bar for blocked popup prompts.\n' +
-            '2. Cross-origin (CORS) restrictions may prevent the script from reading video data. Press F12 to open Developer Tools and check the Console tab for related error messages.',
-        ),
+        fn: () =>
+          alert(
+            'Press the shortcut to take a screenshot. If pressing the shortcut does not produce any results:\n' +
+              '1. The browser may have blocked the popup window — check the address bar for blocked popup prompts.\n' +
+              '2. Cross-origin (CORS) restrictions may prevent the script from reading video data. Press F12 to open Developer Tools and check the Console tab for related error messages.',
+          ),
       },
     ]
     items.forEach((item) => {
