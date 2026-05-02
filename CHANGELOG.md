@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [202605030230] - 2026-05-03
+## [202605030240] - 2026-05-03
 
 ### Changed
 
@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Hotkey recorder no longer triggers a screenshot when re-binding the same key — the global shortcut is now temporarily disabled while the recorder overlay is open.
   修复快捷键录制界面中重新绑定相同按键时会触发截图的问题——录制界面打开时暂时禁用全局快捷键监听。
+
+- Removed `clearMenu()` / `rebuildMenu()` / `GM_unregisterMenuCommand` entirely. Menu is now registered **once** via a global `window._vs_menuRegistered` guard, eliminating orphaned menu items after hotkey change. Menu title changed to static "Configure hotkey" since dynamic `(current: X)` display cannot be reliably updated without `GM_unregisterMenuCommand`.
+  完全移除 `clearMenu()` / `rebuildMenu()` / `GM_unregisterMenuCommand`。菜单通过全局 `window._vs_menuRegistered` 标记只注册一次，消除换快捷键后遗留"孤儿"菜单项的问题。菜单标题改为静态的"Configure hotkey"，不再显示当前快捷键——因为 `GM_unregisterMenuCommand` 不可靠，无法安全地动态更新标题。
 
 ## [202604301545] - 2026-04-30
 

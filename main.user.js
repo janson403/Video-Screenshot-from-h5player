@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202605030230
+// @version      202605030240
 // @description  Press custom hotkey to take video screenshots, supports shadow DOM and cross-origin iframes
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -646,16 +646,17 @@
 
     const overlay = document.createElement('div')
     overlay.id = '_vs_key_recorder'
+    const currentKey = config.screenshotKey || 'S'
     overlay.innerHTML = `
       <div class="_vs_modal">
         <div class="_vs_modal-title">Set Screenshot Hotkey</div>
-        <div class="_vs_modal-hint">Press the key combination you want to bind</div>
-        <div class="_vs_modal-display">
+        <div class="_vs_modal-hint">Current: ${currentKey} — Press a new key combination, or click Save to keep it</div>
+        <div class="_vs_modal-display _vs_active">
           <span class="_vs_key_placeholder">Waiting for key...</span>
         </div>
         <div class="_vs_modal-actions">
           <button class="_vs_btn _vs_btn-cancel">Cancel</button>
-          <button class="_vs_btn _vs_btn-save _vs_disabled" disabled>Save</button>
+          <button class="_vs_btn _vs_btn-save">Save</button>
         </div>
       </div>`
 
@@ -707,7 +708,7 @@
     const saveBtn = overlay.querySelector('._vs_btn-save')
     const cancelBtn = overlay.querySelector('._vs_btn-cancel')
 
-    let recordedKey = ''
+    let recordedKey = currentKey
     let ignoreNextUp = false
 
     const onKeyDown = (e) => {
@@ -767,7 +768,6 @@
       config.screenshotKey = recordedKey
       saveConfig(config)
       registerKeyHandler()
-      rebuildMenu()
       removeRecorder()
       console.log('[VS] Hotkey updated to:', recordedKey)
     })
@@ -791,32 +791,14 @@
   /* ============================================
    * 12. Tampermonkey Menu
    * ============================================ */
-  let menuIds = []
-  let menuRegistered = false
-
-  function clearMenu() {
-    menuIds.forEach((id) => {
-      try {
-        GM_unregisterMenuCommand(id)
-      } catch (e) {}
-    })
-    menuIds = []
-  }
-
-  function rebuildMenu() {
-    clearMenu()
-    menuRegistered = false
-    registerMenu()
-  }
-
   function registerMenu() {
-    /* Guard: only register in the top-level document, not in iframes */
-    if (menuRegistered) return
-    menuRegistered = true
+    /* Global guard: only the first context registers menu items */
+    if (window._vs_menuRegistered) return
+    window._vs_menuRegistered = true
 
     const items = [
       {
-        title: `Change hotkey (current: ${config.screenshotKey})`,
+        title: 'Configure hotkey',
         fn: showKeyRecorder,
       },
       {
@@ -831,8 +813,7 @@
     ]
     items.forEach((item) => {
       try {
-        const id = GM_registerMenuCommand(item.title, item.fn)
-        menuIds.push(id)
+        GM_registerMenuCommand(item.title, item.fn)
       } catch (e) {
         console.warn('[VS] Menu registration failed:', item.title)
       }
@@ -879,6 +860,5 @@
 
   window.addEventListener('beforeunload', () => {
     if (keydownHandler) document.removeEventListener('keydown', keydownHandler, true)
-    clearMenu()
   })
 })()
