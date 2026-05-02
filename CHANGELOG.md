@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [202605030220] - 2026-05-03
+
+### Changed
+
+- Removed hardcoded `KEY_MAP` object (60+ lines). Shortcut matching now relies entirely on the browser's native `event.key` property, making the code smaller and more maintainable.
+  移除硬编码的 `KEY_MAP` 对象（60+ 行），快捷键匹配完全依赖浏览器原生 `event.key` 属性，代码更精简、更易维护。
+
+- Updated "How to use" help text in Tampermonkey menu with detailed troubleshooting for popup blocking and CORS restrictions.
+  更新油猴菜单「如何使用」帮助文本，补充了弹窗拦截和 CORS 限制的详细排查指引。
+
+### Fixed
+
+- Hotkey recorder no longer triggers a screenshot when re-binding the same key — the global shortcut is now temporarily disabled while the recorder overlay is open.
+  修复快捷键录制界面中重新绑定相同按键时会触发截图的问题——录制界面打开时暂时禁用全局快捷键监听。
+
 ## [202604301545] - 2026-04-30
 
 ### Changed

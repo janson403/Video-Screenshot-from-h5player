@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video Screenshot from h5player
 // @namespace    https://gitee.com/jason403/Video-Screenshot-from-h5player/
-// @version      202604301545
+// @version      202605030220
 // @description  Press custom hotkey to take video screenshots, supports shadow DOM and cross-origin iframes
 // @author       Pingyi ZHENG
 // @match        *://*/*
@@ -36,71 +36,6 @@
   const CONFIG_KEY = 'vs_screenshot_config'
   const defaultConfig = {
     screenshotKey: 'S',
-  }
-
-  const KEY_MAP = {
-    A: 65,
-    B: 66,
-    C: 67,
-    D: 68,
-    E: 69,
-    F: 70,
-    G: 71,
-    H: 72,
-    I: 73,
-    J: 74,
-    K: 75,
-    L: 76,
-    M: 77,
-    N: 78,
-    O: 79,
-    P: 80,
-    Q: 81,
-    R: 82,
-    S: 83,
-    T: 84,
-    U: 85,
-    V: 86,
-    W: 87,
-    X: 88,
-    Y: 89,
-    Z: 90,
-    0: 48,
-    1: 49,
-    2: 50,
-    3: 51,
-    4: 52,
-    5: 53,
-    6: 54,
-    7: 55,
-    8: 56,
-    9: 57,
-    Enter: 13,
-    Escape: 27,
-    Space: 32,
-    F1: 112,
-    F2: 113,
-    F3: 114,
-    F4: 115,
-    F5: 116,
-    F6: 117,
-    F7: 118,
-    F8: 119,
-    F9: 120,
-    F10: 121,
-    F11: 122,
-    F12: 123,
-    ';': 186,
-    '=': 187,
-    ',': 188,
-    '-': 189,
-    '.': 190,
-    '/': 191,
-    '`': 192,
-    '[': 219,
-    '\\': 220,
-    ']': 221,
-    "'": 222,
   }
 
   function loadConfig() {
@@ -627,7 +562,6 @@
       shift: false,
       meta: false,
       key: '',
-      keyCode: 0,
     }
     parts.forEach((p) => {
       const lp = p.toLowerCase()
@@ -637,7 +571,6 @@
       else if (lp === 'meta' || lp === 'win' || lp === 'cmd') r.meta = true
       else r.key = p
     })
-    if (r.key) r.keyCode = KEY_MAP[r.key] || r.key.toUpperCase().charCodeAt(0)
     return r
   }
 
@@ -650,8 +583,7 @@
       event.metaKey !== p.meta
     )
       return false
-    const ek = event.key.toUpperCase()
-    if (ek !== p.key.toUpperCase() && event.keyCode !== p.keyCode) return false
+    if (event.key.toUpperCase() !== p.key.toUpperCase()) return false
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return false
     return true
   }
@@ -699,11 +631,18 @@
     if (recorderEl) {
       recorderEl.remove()
       recorderEl = null
+      // Re-enable the global screenshot hotkey
+      registerKeyHandler()
     }
   }
 
   function showKeyRecorder() {
     removeRecorder()
+
+    // Temporarily disable the global screenshot hotkey while recording
+    if (keydownHandler) {
+      native.removeEventListener.call(document, 'keydown', keydownHandler, true)
+    }
 
     const overlay = document.createElement('div')
     overlay.id = '_vs_key_recorder'
@@ -875,9 +814,12 @@
         fn: showKeyRecorder,
       },
       {
-        title:
-          'If pressing the shortcut does not produce any results, open the Developer Tools by pressing F12 to check the Console tab for errors or messages.',
-        fn: () => {},
+        title: 'How to use',
+        fn: alert(
+          'Press the shortcut to take a screenshot. If pressing the shortcut does not produce any results:\n' +
+            '1. The browser may have blocked the popup window — check the address bar for blocked popup prompts.\n' +
+            '2. Cross-origin (CORS) restrictions may prevent the script from reading video data. Press F12 to open Developer Tools and check the Console tab for related error messages.',
+        ),
       },
     ]
     items.forEach((item) => {
